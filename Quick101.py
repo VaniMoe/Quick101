@@ -158,7 +158,8 @@ def load_config() -> Dict:
         'auto_launch_delay': 1.0,
         'compact_mode': False,
         'compact_selected_account': None,
-        'full_window_size': [1100, 800]
+        'full_window_size': [1100, 800],
+        'discord_rpc_enabled': True
     }
     
     if os.path.isfile(CONFIG_FILE):
@@ -2260,6 +2261,25 @@ class SettingsDialog(QDialog):
                 font-size: 12px;
                 padding: 4px;
             }
+            QCheckBox {
+                color: #E0E0E0;
+                font-size: 12px;
+                padding: 4px;
+            }
+            QCheckBox::indicator {
+                width: 15px;
+                height: 15px;
+                border: 1px solid #333333;
+                border-radius: 4px;
+                background-color: #141414;
+            }
+            QCheckBox::indicator:hover {
+                border-color: #555555;
+            }
+            QCheckBox::indicator:checked {
+                background-color: #FFFFFF;
+                border-color: #FFFFFF;
+            }
         """)
         self.updater = GitHubUpdater(self)
         self.updater.update_available.connect(self.on_update_found)
@@ -2314,8 +2334,18 @@ class SettingsDialog(QDialog):
         setup_wizard_btn.clicked.connect(self.run_first_setup)
         setup_layout.addWidget(setup_wizard_btn)
         layout.addWidget(setup_group)
+
+        # 3. Discord Integration
+        discord_group = QGroupBox("DISCORD INTEGRATION")
+        discord_layout = QVBoxLayout(discord_group)
+        discord_layout.setSpacing(8)
         
-        # 3. Logs
+        self.discord_rpc_check = QCheckBox("Enable Discord Rich Presence (Show activity in Discord)")
+        self.discord_rpc_check.setChecked(_cfg.get('discord_rpc_enabled', True))
+        discord_layout.addWidget(self.discord_rpc_check)
+        layout.addWidget(discord_group)
+        
+        # 4. Logs
         logs_group = QGroupBox("LOG FILES")
         logs_layout = QVBoxLayout(logs_group)
         logs_layout.setSpacing(8)
@@ -2491,9 +2521,13 @@ class SettingsDialog(QDialog):
         else:
             _cfg['server'] = 'US'
         _cfg['github_repo'] = self.repo_edit.text().strip() or DEFAULT_GITHUB_REPO
+        rpc_enabled = self.discord_rpc_check.isChecked()
+        _cfg['discord_rpc_enabled'] = rpc_enabled
         save_config(_cfg)
+        if self.parent_window and hasattr(self.parent_window, 'apply_discord_rpc_setting'):
+            self.parent_window.apply_discord_rpc_setting(rpc_enabled)
         if self.parent_window:
-            self.parent_window.update_status(f"Server set to: {_cfg['server']}")
+            self.parent_window.update_status(f"Settings saved")
         self.accept()
 
 # --- PET CALCULATOR DIALOG ---
@@ -3455,8 +3489,24 @@ class DiscordRPCManager:
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
 
+    def clear_presence(self):
+        if self._connected and self.pipe:
+            try:
+                payload = {
+                    "cmd": "SET_ACTIVITY",
+                    "args": {
+                        "pid": os.getpid(),
+                        "activity": None
+                    },
+                    "nonce": str(uuid.uuid4())
+                }
+                self._send(1, payload)
+            except Exception:
+                pass
+
     def stop(self):
         self._running = False
+        self.clear_presence()
         self._close_pipe()
 
     def _connect_pipe(self):
@@ -4256,13 +4306,35 @@ class Quick101Launcher(QMainWindow):
         if _cfg.get('compact_mode', False):
             QTimer.singleShot(0, lambda: self.switch_to_compact_mode(save=False))
 
-        # Discord Rich Presence
-        try:
-            self.discord_rpc = DiscordRPCManager()
-            self.discord_rpc.start()
-        except Exception as e:
-            log_event(f"Discord RPC init failed: {e}", "WARNING")
+        # Discord Rich Presence (if enabled in settings)
+        if _cfg.get('discord_rpc_enabled', True):
+            try:
+                self.discord_rpc = DiscordRPCManager()
+                self.discord_rpc.start()
+            except Exception as e:
+                log_event(f"Discord RPC init failed: {e}", "WARNING")
+                self.discord_rpc = None
+        else:
             self.discord_rpc = None
+
+    def apply_discord_rpc_setting(self, enabled: bool):
+        """Enable or disable Discord RPC dynamically from settings"""
+        if enabled:
+            if not getattr(self, 'discord_rpc', None):
+                try:
+                    self.discord_rpc = DiscordRPCManager()
+                    self.discord_rpc.start()
+                    log_event("Discord RPC enabled.")
+                except Exception as e:
+                    log_event(f"Failed to start Discord RPC: {e}", "WARNING")
+        else:
+            if getattr(self, 'discord_rpc', None):
+                try:
+                    self.discord_rpc.stop()
+                    log_event("Discord RPC stopped and disabled.")
+                except Exception as e:
+                    pass
+                self.discord_rpc = None
         
     def show_update_dialog(self, version: str, notes: str, download_url: str):
         """Display dialog when a new GitHub release is available"""
