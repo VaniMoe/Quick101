@@ -1717,7 +1717,7 @@ class CustomTitleBar(QWidget):
             self.parent_window.toggle_maximize()
 
 # --- AUTO UPDATER VIA GITHUB ---
-APP_VERSION = "2.2"
+APP_VERSION = "2.3"
 DEFAULT_GITHUB_REPO = "VaniMoe/Quick101"
 
 def apply_update(new_exe_path: str) -> bool:
