@@ -2253,6 +2253,306 @@ class SettingsDialog(QDialog):
             self.parent_window.update_status(f"Server set to: {_cfg['server']}")
         self.accept()
 
+# --- PET CALCULATOR DIALOG ---
+class PetCalculatorDialog(QDialog):
+    """Wizard101 Pet Stat Calculator — based on petcalc.weebly.com formulas"""
+
+    HOW_TO_USE = (
+        "How to Use the Pet Calculator\n\n"
+        "1. Look up your pet's maximum stats in-game:\n"
+        "   Strength, Intellect, Agility, Will, and Power.\n\n"
+        "2. Enter those maximum values into the five fields\n"
+        "   on the left side of the calculator.\n\n"
+        "3. The right side will instantly show the values\n"
+        "   each talent will give once your pet is fully\n"
+        "   trained with max snacks.\n\n"
+        "Example: If Spell-Proof shows 10.14%, your pet\n"
+        "will grant 10% resist (rounds down if < .5).\n\n"
+        "Note: Values ending in .5 or higher are rounded\n"
+        "UP by the game; lower values round DOWN.\n"
+        "Critical and Block stats may deviate slightly."
+    )
+
+    # Talent formulas (inputs: strength, intellect, agility, will, power)
+    TALENTS = [
+        # (display_name, unit, lambda)
+        ("Spell-Proof",         "%",   lambda s,i,a,w,p: ((2*s + 2*a + p) / 125) / 100),
+        ("Spell-Defying",       "%",   lambda s,i,a,w,p: ((2*s + 2*a + p) / 250) / 100),
+        ("Pain-Giver",          "%",   lambda s,i,a,w,p: ((2*s + 2*w + p) / 200) / 100),
+        ("Spell-Dealer",        "%",   lambda s,i,a,w,p: ((2*s + 2*w + p) * 0.0075) / 100),
+        ("Pain-Bringer",        "%",   lambda s,i,a,w,p: ((2*s + 2*w + p) / 400) / 100),
+        ("Ward",                "%",   lambda s,i,a,w,p: ((2*s + 2*a + p) * 0.012) / 100),
+        ("Crit Striker",        "",    lambda s,i,a,w,p: (2*a + 2*w + p) * 0.024),
+        ("Crit Hitter",         "",    lambda s,i,a,w,p: (2*a + 2*w + p) * 0.02),
+        ("School Assailant",    "",    lambda s,i,a,w,p: (2*a + 2*w + p) / 40),
+        ("School Striker",      "",    lambda s,i,a,w,p: (2*a + 2*w + p) * 0.02),
+        ("Defender",            "",    lambda s,i,a,w,p: (2*i + 2*w + p) * 0.024),
+        ("Blocker",             "",    lambda s,i,a,w,p: (2*i + 2*w + p) * 0.02),
+        ("Sniper",              "%",   lambda s,i,a,w,p: ((2*i + 2*a + p) * 0.0075) / 100),
+        ("Sharp Shot",          "%",   lambda s,i,a,w,p: ((2*i + 2*a + p) / 200) / 100),
+        ("Eagle Eye",           "%",   lambda s,i,a,w,p: ((2*i + 2*a + p) / 400) / 100),
+        ("Breaker",             "%",   lambda s,i,a,w,p: ((2*s + 2*a + p) / 400) / 100),
+        ("Piercer",             "%",   lambda s,i,a,w,p: ((2*s + 2*a + p) * 0.0015) / 100),
+        ("Stun Resist",         "%",   lambda s,i,a,w,p: ((2*s + 2*i + p) / 250) / 100),
+        ("Stun Recalibration",  "%",   lambda s,i,a,w,p: ((2*s + 2*i + p) / 125) / 100),
+        ("Lively",              "%",   lambda s,i,a,w,p: ((2*i + 2*a + p) * 0.0065) / 100),
+        ("Healer",              "%",   lambda s,i,a,w,p: ((2*s + 2*w + p) * 0.003) / 100),
+        ("Medic",               "%",   lambda s,i,a,w,p: ((2*s + 2*w + p) * 0.0065) / 100),
+        ("Healthy",             "%",   lambda s,i,a,w,p: ((2*i + 2*a + p) * 0.003) / 100),
+    ]
+
+    _FIELD_STYLE = """
+        QSpinBox {
+            background-color: #141414;
+            color: #FAFAFA;
+            border: 1px solid #2A2A2A;
+            border-radius: 5px;
+            padding: 4px 8px;
+            font-size: 12px;
+        }
+        QSpinBox:focus { border: 1px solid #606060; }
+        QSpinBox::up-button, QSpinBox::down-button { width: 0; }
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Quick101 — Pet Stat Calculator")
+        self.setModal(True)
+        self.setMinimumWidth(720)
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #0E0E0E;
+                color: #FAFAFA;
+                border: 1px solid #282828;
+                border-radius: 8px;
+            }
+            QLabel { color: #FAFAFA; }
+            QGroupBox {
+                color: #FAFAFA;
+                font-size: 11px;
+                font-weight: 700;
+                border: 1px solid #242424;
+                border-radius: 6px;
+                margin-top: 12px;
+                padding-top: 14px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 6px;
+            }
+            QTableWidget {
+                background-color: #0A0A0A;
+                color: #FAFAFA;
+                border: 1px solid #242424;
+                border-radius: 5px;
+                gridline-color: #1E1E1E;
+                font-size: 11px;
+            }
+            QTableWidget::item { padding: 4px 8px; }
+            QTableWidget::item:selected {
+                background-color: #2A2A2A;
+                color: #FFFFFF;
+            }
+            QHeaderView::section {
+                background-color: #141414;
+                color: #909090;
+                border: none;
+                border-bottom: 1px solid #282828;
+                padding: 5px 8px;
+                font-size: 10px;
+                font-weight: 700;
+                text-transform: uppercase;
+            }
+            QScrollBar:vertical {
+                background: #0E0E0E;
+                width: 8px;
+                border-radius: 4px;
+            }
+            QScrollBar::handle:vertical {
+                background: #333333;
+                border-radius: 4px;
+            }
+        """)
+        self._build_ui()
+        self._recalculate()
+
+    def _build_ui(self):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(20, 20, 20, 20)
+        root.setSpacing(14)
+
+        # ── Title row ────────────────────────────────────────────────
+        title_row = QHBoxLayout()
+        title_lbl = QLabel("Pet Stat Calculator")
+        title_lbl.setStyleSheet("font-size: 16px; font-weight: bold; color: #FFFFFF;")
+        title_row.addWidget(title_lbl)
+        title_row.addStretch()
+
+        how_btn = ModernButton("How to Use", "secondary")
+        how_btn.clicked.connect(self._show_how_to_use)
+        title_row.addWidget(how_btn)
+        root.addLayout(title_row)
+
+        sub_lbl = QLabel("Enter your pet's maximum stats below — results update instantly.")
+        sub_lbl.setStyleSheet("color: #686868; font-size: 11px;")
+        root.addWidget(sub_lbl)
+
+        # ── Stat inputs ──────────────────────────────────────────────
+        stats_group = QGroupBox("PET STATS (MAX VALUES)")
+        stats_layout = QHBoxLayout(stats_group)
+        stats_layout.setContentsMargins(14, 20, 14, 14)
+        stats_layout.setSpacing(16)
+
+        self._inputs = {}
+        stat_defs = [
+            ("Strength",  "STR", 0, 500),
+            ("Intellect", "INT", 0, 500),
+            ("Agility",   "AGI", 0, 500),
+            ("Will",      "WIL", 0, 500),
+            ("Power",     "PWR", 0, 500),
+        ]
+        for name, short, mn, mx in stat_defs:
+            col = QVBoxLayout()
+            col.setSpacing(4)
+            lbl = QLabel(name)
+            lbl.setStyleSheet("font-size: 10px; color: #808080; font-weight: 600;")
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter if PyQt_Version == 6 else Qt.AlignCenter)
+            col.addWidget(lbl)
+
+            spin = QSpinBox()
+            spin.setRange(mn, mx)
+            spin.setFixedWidth(78)
+            spin.setAlignment(Qt.AlignmentFlag.AlignCenter if PyQt_Version == 6 else Qt.AlignCenter)
+            spin.setStyleSheet(self._FIELD_STYLE)
+            spin.valueChanged.connect(self._recalculate)
+            col.addWidget(spin)
+            self._inputs[name] = spin
+            stats_layout.addLayout(col)
+
+        stats_layout.addStretch()
+        root.addWidget(stats_group)
+
+        # ── Results table ────────────────────────────────────────────
+        results_group = QGroupBox("TALENT VALUES AT MAX STATS")
+        results_layout = QVBoxLayout(results_group)
+        results_layout.setContentsMargins(14, 20, 14, 14)
+
+        self._table = QTableWidget(len(self.TALENTS), 3)
+        self._table.setHorizontalHeaderLabels(["Talent", "Value", "Note"])
+        self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch if PyQt_Version == 6 else QHeaderView.Stretch)
+        self._table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed if PyQt_Version == 6 else QHeaderView.Fixed)
+        self._table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed if PyQt_Version == 6 else QHeaderView.Fixed)
+        self._table.setColumnWidth(1, 90)
+        self._table.setColumnWidth(2, 200)
+        self._table.verticalHeader().setVisible(False)
+        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers if PyQt_Version == 6 else QTableWidget.NoEditTriggers)
+        self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows if PyQt_Version == 6 else QTableWidget.SelectRows)
+        self._table.setAlternatingRowColors(True)
+        self._table.setStyleSheet(self._table.styleSheet() + "QTableWidget { alternate-background-color: #0E0E0E; }")
+
+        for row, (name, unit, _) in enumerate(self.TALENTS):
+            name_item = QTableWidgetItem(name)
+            name_item.setForeground(QColor("#DADADA"))
+            self._table.setItem(row, 0, name_item)
+
+            val_item = QTableWidgetItem("—")
+            val_item.setTextAlignment((Qt.AlignmentFlag.AlignRight if PyQt_Version == 6 else Qt.AlignRight) | (Qt.AlignmentFlag.AlignVCenter if PyQt_Version == 6 else Qt.AlignVCenter))
+            val_item.setForeground(QColor("#86EFAC"))
+            self._table.setItem(row, 1, val_item)
+
+            note_item = QTableWidgetItem("")
+            note_item.setForeground(QColor("#686868"))
+            self._table.setItem(row, 2, note_item)
+
+        results_layout.addWidget(self._table)
+        root.addWidget(results_group)
+
+        # ── Bottom buttons ───────────────────────────────────────────
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        reset_btn = ModernButton("Reset", "secondary")
+        reset_btn.clicked.connect(self._reset)
+        btn_row.addWidget(reset_btn)
+        close_btn = ModernButton("Close", "primary")
+        close_btn.clicked.connect(self.accept)
+        btn_row.addWidget(close_btn)
+        root.addLayout(btn_row)
+
+    def _get_stats(self):
+        return (
+            self._inputs["Strength"].value(),
+            self._inputs["Intellect"].value(),
+            self._inputs["Agility"].value(),
+            self._inputs["Will"].value(),
+            self._inputs["Power"].value(),
+        )
+
+    def _recalculate(self):
+        s, i, a, w, p = self._get_stats()
+        all_zero = (s == i == a == w == p == 0)
+        for row, (name, unit, fn) in enumerate(self.TALENTS):
+            if all_zero:
+                self._table.item(row, 1).setText("—")
+                self._table.item(row, 2).setText("")
+                continue
+            raw = fn(s, i, a, w, p)
+            if unit == "%":
+                pct = raw * 100
+                # Game rounds .5+ up, below .5 down
+                rounded = math.floor(pct + 0.5)
+                self._table.item(row, 1).setText(f"{pct:.3f}%")
+                note = f"→ {rounded}% in-game"
+                # Colour-code: green if clean round, yellow if close
+                diff = abs(pct - rounded)
+                col = "#86EFAC" if diff < 0.05 else ("#FDE68A" if diff < 0.4 else "#FCA5A5")
+                self._table.item(row, 1).setForeground(QColor(col))
+                self._table.item(row, 2).setText(note)
+            else:
+                rounded = math.floor(raw + 0.5)
+                self._table.item(row, 1).setText(f"{raw:.2f}")
+                self._table.item(row, 2).setText(f"→ {rounded} in-game")
+                self._table.item(row, 1).setForeground(QColor("#93C5FD"))
+
+    def _reset(self):
+        for spin in self._inputs.values():
+            spin.blockSignals(True)
+            spin.setValue(0)
+            spin.blockSignals(False)
+        self._recalculate()
+
+    def _show_how_to_use(self):
+        dlg = QDialog(self)
+        dlg.setWindowTitle("How to Use — Pet Calculator")
+        dlg.setModal(True)
+        dlg.setFixedWidth(420)
+        dlg.setStyleSheet("""
+            QDialog { background-color: #0E0E0E; color: #FAFAFA; border: 1px solid #282828; border-radius: 8px; }
+            QLabel { color: #DADADA; }
+        """)
+        layout = QVBoxLayout(dlg)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(14)
+
+        title = QLabel("How to Use")
+        title.setStyleSheet("font-size: 14px; font-weight: bold; color: #FFFFFF;")
+        layout.addWidget(title)
+
+        body = QLabel(self.HOW_TO_USE)
+        body.setWordWrap(True)
+        body.setStyleSheet("font-size: 11px; color: #C0C0C0; line-height: 1.6;")
+        layout.addWidget(body)
+
+        note = QLabel("Formula source: petcalc.weebly.com by @mxdup")
+        note.setStyleSheet("font-size: 10px; color: #505050; font-style: italic;")
+        layout.addWidget(note)
+
+        ok_btn = ModernButton("Got it!", "primary")
+        ok_btn.clicked.connect(dlg.accept)
+        layout.addWidget(ok_btn)
+        dlg.exec()
+
+
 # --- MAIN MODERN LAUNCHER ---
 class Quick101Launcher(QMainWindow):
    
@@ -3881,7 +4181,8 @@ class Quick101Launcher(QMainWindow):
     # --- TOOLS ---
     def open_pet_calculator(self):
         """Open Pet Calculator tool"""
-        QMessageBox.information(self, "Pet Calculator", "Pet Calculator — coming soon!")
+        dlg = PetCalculatorDialog(self)
+        dlg.exec()
 
     def open_pet_wow_returner(self):
         """Open Pet WoW Returner tool"""
