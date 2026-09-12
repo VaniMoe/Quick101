@@ -18,6 +18,9 @@ from typing import Dict, List, Optional, Tuple
 from enum import Enum
 import urllib.request
 import urllib.error
+import struct
+import uuid
+import ctypes.wintypes
 
 # PyQt imports with fallback support
 try:
@@ -1728,7 +1731,7 @@ class CustomTitleBar(QWidget):
             self.parent_window.toggle_maximize()
 
 # --- AUTO UPDATER VIA GITHUB ---
-APP_VERSION = "2.4"
+APP_VERSION = "2.5"
 DEFAULT_GITHUB_REPO = "VaniMoe/Quick101"
 
 def apply_update(new_exe_path: str) -> bool:
@@ -1906,15 +1909,20 @@ class UpdateDialog(QDialog):
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(12)
         
-        title = QLabel(f"New Version Available: v{self.version}")
-        title.setStyleSheet("font-size: 15px; font-weight: bold; color: #FFFFFF; letter-spacing: 0.5px;")
+        title = QLabel(f"Neues Update ready! (v{self.version})")
+        title.setStyleSheet("font-size: 16px; font-weight: bold; color: #FFFFFF; letter-spacing: 0.5px;")
         layout.addWidget(title)
         
-        current_lbl = QLabel(f"Current version: v{APP_VERSION}")
-        current_lbl.setStyleSheet("color: #888888; font-size: 11px;")
+        current_lbl = QLabel(f"Ein neues Update für Quick101 ist verfügbar. (Installiert: v{APP_VERSION})")
+        current_lbl.setStyleSheet("color: #86EFAC; font-size: 11px;")
         layout.addWidget(current_lbl)
+
+        link_lbl = QLabel('<a href="https://github.com/VaniMoe/Quick101/releases/latest" style="color: #60A5FA; text-decoration: underline;">GitHub Release Seite öffnen & herunterladen</a>')
+        link_lbl.setOpenExternalLinks(True)
+        link_lbl.setStyleSheet("font-size: 11px;")
+        layout.addWidget(link_lbl)
         
-        notes_label = QLabel("Release Notes:")
+        notes_label = QLabel("Changelog / Release Notes:")
         notes_label.setStyleSheet("color: #A0A0A0; font-size: 11px; font-weight: 600; margin-top: 4px;")
         layout.addWidget(notes_label)
         
@@ -1936,17 +1944,22 @@ class UpdateDialog(QDialog):
         
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(10)
+        
+        self.gh_btn = ModernButton("Download (GitHub)", "secondary", icon_name="launch")
+        self.gh_btn.clicked.connect(self.open_release_page)
+        btn_layout.addWidget(self.gh_btn)
+        
         btn_layout.addStretch()
         
-        self.cancel_btn = ModernButton("Later", "secondary")
+        self.cancel_btn = ModernButton("Später", "secondary")
         self.cancel_btn.clicked.connect(self.reject)
         btn_layout.addWidget(self.cancel_btn)
         
         if self.download_url:
-            self.action_btn = ModernButton("Update Now", "primary", icon_name="launch")
+            self.action_btn = ModernButton("Direkt Updaten", "primary")
             self.action_btn.clicked.connect(self.start_update)
         else:
-            self.action_btn = ModernButton("Open Release Page", "primary")
+            self.action_btn = ModernButton("Auf GitHub öffnen", "primary")
             self.action_btn.clicked.connect(self.open_release_page)
         btn_layout.addWidget(self.action_btn)
         
@@ -1959,52 +1972,56 @@ class UpdateDialog(QDialog):
 
     def start_update(self):
         self.action_btn.setEnabled(False)
-        self.action_btn.setText("Downloading...")
+        self.action_btn.setText("Lade herunter...")
         self.cancel_btn.setEnabled(False)
+        if hasattr(self, 'gh_btn'):
+            self.gh_btn.setEnabled(False)
         self.progress_bar.show()
-        self.status_lbl.setText("Downloading update package from GitHub...")
+        self.status_lbl.setText("Lade Update von GitHub herunter...")
         self.status_lbl.show()
         self.updater.download_and_install_update(self.download_url)
 
     def on_download_progress(self, percent: int):
         self.progress_bar.setValue(percent)
-        self.status_lbl.setText(f"Downloading update: {percent}%")
+        self.status_lbl.setText(f"Download läuft: {percent}%")
 
     def on_download_finished(self, new_exe_path: str):
         self.progress_bar.setValue(100)
         success = apply_update(new_exe_path)
         if success:
-            self.status_lbl.setText("Update installed! Please restart Quick101.")
+            self.status_lbl.setText("Update installiert! Bitte Quick101 neu starten.")
             self.status_lbl.setStyleSheet("color: #86EFAC; font-size: 11px;")
-            self.action_btn.setText("Close")
+            self.action_btn.setText("Schließen")
             self.action_btn.setEnabled(True)
             self.action_btn.clicked.disconnect()
             self.action_btn.clicked.connect(self.accept)
             self.cancel_btn.hide()
             QMessageBox.information(
-                self, "Update Installed",
-                "The update has been downloaded and installed.\n\n"
-                "Please close and reopen Quick101 to use the new version."
+                self, "Update Installiert",
+                "Das Update wurde erfolgreich heruntergeladen und installiert.\n\n"
+                "Bitte schließe Quick101 und starte es neu, um die neue Version zu nutzen."
             )
         else:
-            self.status_lbl.setText("Failed to replace the EXE. Is Quick101 running from a write-protected location?")
+            self.status_lbl.setText("Fehler beim Ersetzen der EXE.")
             self.status_lbl.setStyleSheet("color: #FFA0A0; font-size: 11px;")
             self.action_btn.setEnabled(True)
-            self.action_btn.setText("Retry")
+            self.action_btn.setText("Wiederholen")
             self.cancel_btn.setEnabled(True)
+            if hasattr(self, 'gh_btn'):
+                self.gh_btn.setEnabled(True)
 
     def on_download_failed(self, err: str):
-        self.status_lbl.setText(f"Update failed: {err}")
+        self.status_lbl.setText(f"Update fehlgeschlagen: {err}")
         self.status_lbl.setStyleSheet("color: #FFA0A0; font-size: 11px;")
         self.action_btn.setEnabled(True)
-        self.action_btn.setText("Retry")
+        self.action_btn.setText("Wiederholen")
         self.cancel_btn.setEnabled(True)
+        if hasattr(self, 'gh_btn'):
+            self.gh_btn.setEnabled(True)
 
     def open_release_page(self):
-        repo = _cfg.get('github_repo', DEFAULT_GITHUB_REPO)
-        web_url = f"https://github.com/{repo}/releases/tag/v{self.version}"
         import webbrowser
-        webbrowser.open(web_url)
+        webbrowser.open("https://github.com/VaniMoe/Quick101/releases/latest")
         self.accept()
 
 class SettingsDialog(QDialog):
@@ -3164,6 +3181,837 @@ class PetWoWReturnerDialog(QDialog):
         dlg.exec()
 
 
+# --- WIZARD101 PROCESS INSTANCE COUNTER ---
+def count_wizard101_instances() -> int:
+    """Count currently running Wizard101 game instances via Toolhelp32Snapshot"""
+    try:
+        TH32CS_SNAPPROCESS = 0x00000002
+        class PROCESSENTRY32(ctypes.Structure):
+            _fields_ = [
+                ("dwSize", ctypes.wintypes.DWORD),
+                ("cntUsage", ctypes.wintypes.DWORD),
+                ("th32ProcessID", ctypes.wintypes.DWORD),
+                ("th32DefaultHeapID", ctypes.POINTER(ctypes.c_ulong)),
+                ("th32ModuleID", ctypes.wintypes.DWORD),
+                ("cntThreads", ctypes.wintypes.DWORD),
+                ("th32ParentProcessID", ctypes.wintypes.DWORD),
+                ("pcPriClassBase", ctypes.c_long),
+                ("dwFlags", ctypes.wintypes.DWORD),
+                ("szExeFile", ctypes.c_char * 260)
+            ]
+        kernel32 = ctypes.windll.kernel32
+        hSnapshot = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+        if hSnapshot == -1:
+            return 0
+        pe = PROCESSENTRY32()
+        pe.dwSize = ctypes.sizeof(PROCESSENTRY32)
+        count = 0
+        if kernel32.Process32First(hSnapshot, ctypes.byref(pe)):
+            while True:
+                exe_name = pe.szExeFile.decode("utf-8", errors="ignore").lower()
+                if "wizardgraphicalclient" in exe_name or exe_name == "wizard101.exe":
+                    count += 1
+                if not kernel32.Process32Next(hSnapshot, ctypes.byref(pe)):
+                    break
+        kernel32.CloseHandle(hSnapshot)
+        return count
+    except Exception:
+        return 0
+
+
+# --- DISCORD RICH PRESENCE MANAGER ---
+DISCORD_CLIENT_ID = "1548457677896552479"
+DISCORD_PUBLIC_KEY = "a54892bf21252ecb833eaf099df7e0f202d161a535d8ad41655f404c0974a560"
+
+class DiscordRPCManager:
+    """Manages Discord Rich Presence via local IPC pipe in a background daemon thread"""
+    def __init__(self, client_id=DISCORD_CLIENT_ID):
+        self.client_id = client_id
+        self.pipe = None
+        self._connected = False
+        self._running = False
+        self.start_time = int(time.time())
+        self._thread = None
+
+    def start(self):
+        if self._running:
+            return
+        self._running = True
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        self._running = False
+        self._close_pipe()
+
+    def _connect_pipe(self):
+        for i in range(10):
+            pipe_name = rf"\\.\pipe\discord-ipc-{i}"
+            try:
+                self.pipe = open(pipe_name, "w+b")
+                self._connected = True
+                self._handshake()
+                return True
+            except (FileNotFoundError, PermissionError, OSError):
+                continue
+        return False
+
+    def _send(self, op, payload):
+        if not self.pipe:
+            return
+        data = json.dumps(payload).encode("utf-8")
+        header = struct.pack("<II", op, len(data))
+        self.pipe.write(header + data)
+        self.pipe.flush()
+
+    def _read(self):
+        if not self.pipe:
+            return None, None
+        try:
+            header = self.pipe.read(8)
+            if len(header) < 8:
+                return None, None
+            op, length = struct.unpack("<II", header)
+            data = self.pipe.read(length)
+            return op, json.loads(data.decode("utf-8"))
+        except Exception:
+            return None, None
+
+    def _handshake(self):
+        self._send(0, {"v": 1, "client_id": self.client_id})
+        self._read()
+
+    def _close_pipe(self):
+        if self.pipe:
+            try:
+                self._send(2, {})
+                self.pipe.close()
+            except Exception:
+                pass
+            self.pipe = None
+        self._connected = False
+
+    def _update_presence(self):
+        if not self._connected:
+            if not self._connect_pipe():
+                return
+
+        instances = count_wizard101_instances()
+        if instances == 0:
+            details = "Quick101 - Wizard101 Launcher"
+            state = "Befindet sich gerade im Launcher"
+        elif instances == 1:
+            details = "Quick101 - Wizard101 Launcher"
+            state = "1 Instanz offen"
+        else:
+            details = "Quick101 - Wizard101 Launcher"
+            state = f"{instances} Instanzen offen"
+
+        buttons = [
+            {
+                "label": "Download Launcher",
+                "url": "https://github.com/VaniMoe/Quick101/releases/latest"
+            }
+        ]
+
+        activity = {
+            "details": details,
+            "state": state,
+            "timestamps": {"start": self.start_time},
+            "assets": {
+                "large_image": "quick101",
+                "large_text": "Quick101 - Wizard101 Launcher"
+            },
+            "buttons": buttons
+        }
+
+        payload = {
+            "cmd": "SET_ACTIVITY",
+            "args": {
+                "pid": os.getpid(),
+                "activity": activity
+            },
+            "nonce": str(uuid.uuid4())
+        }
+
+        try:
+            self._send(1, payload)
+            self._read()
+        except Exception:
+            self._close_pipe()
+
+    def _loop(self):
+        while self._running:
+            try:
+                self._update_presence()
+            except Exception:
+                pass
+            for _ in range(12):
+                if not self._running:
+                    break
+                time.sleep(1)
+
+
+# --- DAMAGE CALCULATOR DIALOG ---
+def _calc_boost(val: float) -> float:
+    if val == 1:
+        return 1.0
+    r = val / 100.0
+    return 1.0 + r if r != 0 else 0.0
+
+def _calculate_damage_core(base_dmg, wizard_pct, wizard_flat, personal_aura, global_aura, enemy_boost, blades, traps) -> int:
+    n = float(base_dmg)
+    # 1. Wizard %
+    if wizard_pct:
+        n *= _calc_boost(wizard_pct)
+    n = math.floor(n)
+    
+    # 2. Wizard Flat
+    if wizard_flat:
+        n += math.floor(wizard_flat)
+        
+    # 3. Personal Aura
+    if personal_aura:
+        n *= _calc_boost(personal_aura)
+        n = math.floor(n)
+        
+    # 4. Blades (in order)
+    for b in blades:
+        if b:
+            n *= _calc_boost(b)
+            n = math.floor(n)
+            
+    # 5. Global Aura
+    if global_aura:
+        n *= _calc_boost(global_aura)
+        n = math.floor(n)
+        
+    # 6. Traps (in reverse order as applied in game)
+    for t in reversed(traps):
+        if t:
+            n *= _calc_boost(t)
+            n = math.floor(n)
+            
+    # 7. Enemy internal boost
+    if enemy_boost:
+        n *= _calc_boost(enemy_boost)
+        
+    return math.floor(n)
+
+class ChipButton(QPushButton):
+    def __init__(self, text, remove_callback, is_trap=False, parent=None):
+        super().__init__(f"{text} ✕", parent)
+        cursor_ptr = Qt.CursorShape.PointingHandCursor if PyQt_Version == 6 else Qt.PointingHandCursor
+        self.setCursor(cursor_ptr)
+        if is_trap:
+            self.setStyleSheet("""
+                QPushButton {
+                    background-color: #31182A;
+                    color: #F472B6;
+                    border: 1px solid #EC4899;
+                    border-radius: 12px;
+                    padding: 3px 8px;
+                    font-size: 11px;
+                    font-weight: 600;
+                }
+                QPushButton:hover {
+                    background-color: #7F1D1D;
+                    color: #FCA5A5;
+                    border-color: #EF4444;
+                }
+            """)
+        else:
+            self.setStyleSheet("""
+                QPushButton {
+                    background-color: #1E293B;
+                    color: #93C5FD;
+                    border: 1px solid #3B82F6;
+                    border-radius: 12px;
+                    padding: 3px 8px;
+                    font-size: 11px;
+                    font-weight: 600;
+                }
+                QPushButton:hover {
+                    background-color: #7F1D1D;
+                    color: #FCA5A5;
+                    border-color: #EF4444;
+                }
+            """)
+        self.clicked.connect(remove_callback)
+
+class DamageCalculatorDialog(QDialog):
+    """Wizard101 Damage Calculator — based on wizard101calculator.com formulas"""
+    HOW_TO_USE = (
+        "Wizard101 Damage Calculator Guide\n\n"
+        "1. Select your Card Type:\n"
+        "   • Single: One base damage number (e.g. 500)\n"
+        "   • Min-Max: Damage range (e.g. 450 - 520)\n"
+        "   • Damage Per Pip (DPP): Base × Pips + Enchant\n"
+        "   • DoT: Initial Hit + Damage over 3 rounds\n\n"
+        "2. Enter your Wizard Stats:\n"
+        "   • Damage % from gear\n"
+        "   • Flat Damage from jewels/gear\n"
+        "   • Personal Aura % (e.g. 25% Frenzy)\n"
+        "   • Global Bubble % (e.g. 25% Wyldfire)\n"
+        "   • Enemy Internal Boost % (if applicable)\n\n"
+        "3. Add Blades and Traps:\n"
+        "   • Use quick buttons (+35%, +45%, Feint +70%, etc.) or custom %\n"
+        "   • Click any chip to remove it\n\n"
+        "Order of calculation matches in-game order:\n"
+        "Base → Gear % → Flat → Aura → Blades → Bubble → Traps → Enemy Boost.\n\n"
+        "Formula source: wizard101calculator.com"
+    )
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Quick101 — Wizard101 Damage Calculator")
+        self.setModal(True)
+        self.resize(880, 720)
+        self.setMinimumSize(800, 620)
+
+        self._blades: List[float] = []
+        self._traps: List[float] = []
+
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #0E0E0E;
+                color: #FAFAFA;
+                border: 1px solid #282828;
+                border-radius: 8px;
+            }
+            QLabel { color: #FAFAFA; }
+            QGroupBox {
+                color: #FAFAFA;
+                font-size: 11px;
+                font-weight: 700;
+                border: 1px solid #242424;
+                border-radius: 6px;
+                margin-top: 10px;
+                padding-top: 14px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 6px;
+            }
+            QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {
+                background-color: #141414;
+                color: #FAFAFA;
+                border: 1px solid #2A2A2A;
+                border-radius: 5px;
+                padding: 5px 8px;
+                font-size: 12px;
+            }
+            QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {
+                border: 1px solid #606060;
+            }
+            QSpinBox::up-button, QSpinBox::down-button,
+            QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {
+                width: 0;
+            }
+            QScrollArea {
+                border: none;
+                background-color: transparent;
+            }
+            QScrollBar:vertical {
+                background: #0E0E0E;
+                width: 8px;
+                border-radius: 4px;
+            }
+            QScrollBar::handle:vertical {
+                background: #333333;
+                border-radius: 4px;
+            }
+        """)
+
+        self._build_ui()
+        self._recalculate()
+
+    def _build_ui(self):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(18, 18, 18, 18)
+        root.setSpacing(12)
+
+        # Title bar
+        title_row = QHBoxLayout()
+        v_title = QVBoxLayout()
+        v_title.setSpacing(2)
+        title_lbl = QLabel("Wizard101 Damage Calculator")
+        title_lbl.setStyleSheet("font-size: 16px; font-weight: bold; color: #FFFFFF;")
+        v_title.addWidget(title_lbl)
+        sub_lbl = QLabel("Exact in-game spell damage calculation (wizard101calculator.com)")
+        sub_lbl.setStyleSheet("color: #707070; font-size: 11px;")
+        v_title.addWidget(sub_lbl)
+        title_row.addLayout(v_title)
+        title_row.addStretch()
+
+        help_btn = ModernButton("How to Use", "secondary")
+        help_btn.clicked.connect(self._show_how_to_use)
+        title_row.addWidget(help_btn)
+        root.addLayout(title_row)
+
+        # Main scrollable area
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
+
+        # 1. Mode Selector
+        mode_box = QGroupBox("CARD DAMAGE TYPE")
+        mode_l = QHBoxLayout(mode_box)
+        mode_l.setSpacing(12)
+        self.mode_combo = QComboBox()
+        self.mode_combo.addItems([
+            "Single Damage",
+            "Min - Max Damage",
+            "Damage Per Pip (DPP)",
+            "Damage + Over 3 Rounds (DoT)"
+        ])
+        self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
+        mode_l.addWidget(QLabel("Spell Mode:"))
+        mode_l.addWidget(self.mode_combo, 1)
+
+        # Critical Multiplier
+        mode_l.addWidget(QLabel("Critical Multiplier:"))
+        self.crit_combo = QComboBox()
+        self.crit_combo.addItems(["2.0x", "1.9x", "1.8x", "1.7x", "1.6x", "1.5x", "1.4x", "1.3x", "1.25x"])
+        self.crit_combo.currentIndexChanged.connect(self._recalculate)
+        mode_l.addWidget(self.crit_combo)
+        layout.addWidget(mode_box)
+
+        # 2. Card Damage Inputs (Stacked Widget)
+        self.inputs_box = QGroupBox("CARD BASE DAMAGE")
+        in_l = QVBoxLayout(self.inputs_box)
+        self.card_stack = QStackedWidget()
+
+        # Page 0: Single
+        p0 = QWidget()
+        p0_l = QHBoxLayout(p0)
+        p0_l.addWidget(QLabel("Base Card Damage:"))
+        self.single_dmg = QSpinBox()
+        self.single_dmg.setRange(0, 99999)
+        self.single_dmg.setValue(500)
+        self.single_dmg.valueChanged.connect(self._recalculate)
+        p0_l.addWidget(self.single_dmg)
+        p0_l.addStretch()
+        self.card_stack.addWidget(p0)
+
+        # Page 1: Min-Max
+        p1 = QWidget()
+        p1_l = QHBoxLayout(p1)
+        p1_l.addWidget(QLabel("Min Damage:"))
+        self.min_dmg = QSpinBox()
+        self.min_dmg.setRange(0, 99999)
+        self.min_dmg.setValue(450)
+        self.min_dmg.valueChanged.connect(self._recalculate)
+        p1_l.addWidget(self.min_dmg)
+        p1_l.addWidget(QLabel("Max Damage:"))
+        self.max_dmg = QSpinBox()
+        self.max_dmg.setRange(0, 99999)
+        self.max_dmg.setValue(520)
+        self.max_dmg.valueChanged.connect(self._recalculate)
+        p1_l.addWidget(self.max_dmg)
+        p1_l.addStretch()
+        self.card_stack.addWidget(p1)
+
+        # Page 2: DPP
+        p2 = QWidget()
+        p2_l = QHBoxLayout(p2)
+        p2_l.addWidget(QLabel("Damage per Pip:"))
+        self.dpp_dmg = QSpinBox()
+        self.dpp_dmg.setRange(0, 99999)
+        self.dpp_dmg.setValue(100)
+        self.dpp_dmg.valueChanged.connect(self._recalculate)
+        p2_l.addWidget(self.dpp_dmg)
+        p2_l.addWidget(QLabel("Total Pips:"))
+        self.dpp_pips = QSpinBox()
+        self.dpp_pips.setRange(1, 14)
+        self.dpp_pips.setValue(7)
+        self.dpp_pips.valueChanged.connect(self._recalculate)
+        p2_l.addWidget(self.dpp_pips)
+        p2_l.addWidget(QLabel("Enchant (Flat):"))
+        self.dpp_enchant = QSpinBox()
+        self.dpp_enchant.setRange(0, 9999)
+        self.dpp_enchant.setValue(0)
+        self.dpp_enchant.valueChanged.connect(self._recalculate)
+        p2_l.addWidget(self.dpp_enchant)
+        p2_l.addStretch()
+        self.card_stack.addWidget(p2)
+
+        # Page 3: DoT
+        p3 = QWidget()
+        p3_l = QHBoxLayout(p3)
+        p3_l.addWidget(QLabel("Initial Hit:"))
+        self.dot_hit = QSpinBox()
+        self.dot_hit.setRange(0, 99999)
+        self.dot_hit.setValue(100)
+        self.dot_hit.valueChanged.connect(self._recalculate)
+        p3_l.addWidget(self.dot_hit)
+        p3_l.addWidget(QLabel("Damage Over 3 Rounds:"))
+        self.dot_over = QSpinBox()
+        self.dot_over.setRange(0, 99999)
+        self.dot_over.setValue(600)
+        self.dot_over.valueChanged.connect(self._recalculate)
+        p3_l.addWidget(self.dot_over)
+        p3_l.addStretch()
+        self.card_stack.addWidget(p3)
+
+        in_l.addWidget(self.card_stack)
+        layout.addWidget(self.inputs_box)
+
+        # 3. Wizard Stats & Auras
+        stats_box = QGroupBox("WIZARD STATS & AURAS")
+        stats_l = QGridLayout(stats_box)
+        stats_l.setSpacing(10)
+
+        stats_l.addWidget(QLabel("Wizard Damage % (Gear):"), 0, 0)
+        self.stat_pct = QSpinBox()
+        self.stat_pct.setRange(0, 500)
+        self.stat_pct.setValue(150)
+        self.stat_pct.valueChanged.connect(self._recalculate)
+        stats_l.addWidget(self.stat_pct, 0, 1)
+
+        stats_l.addWidget(QLabel("Wizard Flat Damage (Gear/Jewel):"), 0, 2)
+        self.stat_flat = QSpinBox()
+        self.stat_flat.setRange(0, 500)
+        self.stat_flat.setValue(30)
+        self.stat_flat.valueChanged.connect(self._recalculate)
+        stats_l.addWidget(self.stat_flat, 0, 3)
+
+        stats_l.addWidget(QLabel("Personal Aura % (e.g. Frenzy):"), 1, 0)
+        self.stat_aura = QSpinBox()
+        self.stat_aura.setRange(-100, 200)
+        self.stat_aura.setValue(25)
+        self.stat_aura.valueChanged.connect(self._recalculate)
+        stats_l.addWidget(self.stat_aura, 1, 1)
+
+        stats_l.addWidget(QLabel("Global Aura / Bubble %:"), 1, 2)
+        self.stat_bubble = QSpinBox()
+        self.stat_bubble.setRange(-100, 200)
+        self.stat_bubble.setValue(0)
+        self.stat_bubble.valueChanged.connect(self._recalculate)
+        stats_l.addWidget(self.stat_bubble, 1, 3)
+
+        stats_l.addWidget(QLabel("Enemy Internal Boost %:"), 2, 0)
+        self.stat_enemy = QSpinBox()
+        self.stat_enemy.setRange(-100, 200)
+        self.stat_enemy.setValue(0)
+        self.stat_enemy.valueChanged.connect(self._recalculate)
+        stats_l.addWidget(self.stat_enemy, 2, 1)
+
+        layout.addWidget(stats_box)
+
+        # 4. Blades
+        blades_box = QGroupBox("BLADES (POSITIVE MODIFIERS)")
+        blades_l = QVBoxLayout(blades_box)
+        b_add_row = QHBoxLayout()
+        self.blade_input = QSpinBox()
+        self.blade_input.setRange(-100, 200)
+        self.blade_input.setValue(35)
+        b_add_row.addWidget(self.blade_input)
+        add_b_btn = ModernButton("+ Add Blade", "secondary")
+        add_b_btn.clicked.connect(self._add_custom_blade)
+        b_add_row.addWidget(add_b_btn)
+
+        # Quick blade buttons
+        cursor_ptr = Qt.CursorShape.PointingHandCursor if PyQt_Version == 6 else Qt.PointingHandCursor
+        for val in [30, 35, 40, 45, 50]:
+            qb = QPushButton(f"+{val}%")
+            qb.setCursor(cursor_ptr)
+            qb.setStyleSheet("background-color: #1A1A1A; color: #D0D0D0; border: 1px solid #333333; border-radius: 4px; padding: 4px 8px; font-size: 11px;")
+            qb.clicked.connect(lambda _, v=val: self._add_blade(v))
+            b_add_row.addWidget(qb)
+
+        clear_b_btn = QPushButton("Clear All")
+        clear_b_btn.setCursor(cursor_ptr)
+        clear_b_btn.setStyleSheet("background-color: #2D1515; color: #F87171; border: 1px solid #7F1D1D; border-radius: 4px; padding: 4px 8px; font-size: 11px;")
+        clear_b_btn.clicked.connect(self._clear_blades)
+        b_add_row.addWidget(clear_b_btn)
+        b_add_row.addStretch()
+        blades_l.addLayout(b_add_row)
+
+        self.blades_chip_layout = QHBoxLayout()
+        self.blades_chip_layout.setSpacing(6)
+        self.blades_empty_lbl = QLabel("No blades added. Use buttons above to add.")
+        self.blades_empty_lbl.setStyleSheet("color: #606060; font-size: 11px; font-style: italic;")
+        self.blades_chip_layout.addWidget(self.blades_empty_lbl)
+        self.blades_chip_layout.addStretch()
+        blades_l.addLayout(self.blades_chip_layout)
+        layout.addWidget(blades_box)
+
+        # 5. Traps
+        traps_box = QGroupBox("TRAPS (NEGATIVE MODIFIERS)")
+        traps_l = QVBoxLayout(traps_box)
+        t_add_row = QHBoxLayout()
+        self.trap_input = QSpinBox()
+        self.trap_input.setRange(-100, 200)
+        self.trap_input.setValue(70)
+        t_add_row.addWidget(self.trap_input)
+        add_t_btn = ModernButton("+ Add Trap", "secondary")
+        add_t_btn.clicked.connect(self._add_custom_trap)
+        t_add_row.addWidget(add_t_btn)
+
+        # Quick trap buttons
+        for val, label in [(20, "+20%"), (25, "+25%"), (30, "+30%"), (35, "+35%"), (70, "+70% Feint"), (75, "+75% Potent")]:
+            qt = QPushButton(label)
+            qt.setCursor(cursor_ptr)
+            qt.setStyleSheet("background-color: #1A1A1A; color: #D0D0D0; border: 1px solid #333333; border-radius: 4px; padding: 4px 8px; font-size: 11px;")
+            qt.clicked.connect(lambda _, v=val: self._add_trap(v))
+            t_add_row.addWidget(qt)
+
+        clear_t_btn = QPushButton("Clear All")
+        clear_t_btn.setCursor(cursor_ptr)
+        clear_t_btn.setStyleSheet("background-color: #2D1515; color: #F87171; border: 1px solid #7F1D1D; border-radius: 4px; padding: 4px 8px; font-size: 11px;")
+        clear_t_btn.clicked.connect(self._clear_traps)
+        t_add_row.addWidget(clear_t_btn)
+        t_add_row.addStretch()
+        traps_l.addLayout(t_add_row)
+
+        self.traps_chip_layout = QHBoxLayout()
+        self.traps_chip_layout.setSpacing(6)
+        self.traps_empty_lbl = QLabel("No traps added. Use buttons above to add.")
+        self.traps_empty_lbl.setStyleSheet("color: #606060; font-size: 11px; font-style: italic;")
+        self.traps_chip_layout.addWidget(self.traps_empty_lbl)
+        self.traps_chip_layout.addStretch()
+        traps_l.addLayout(self.traps_chip_layout)
+        layout.addWidget(traps_box)
+
+        # 6. Results Box
+        res_box = QGroupBox("CALCULATED DAMAGE OUTPUT")
+        res_l = QVBoxLayout(res_box)
+        res_l.setContentsMargins(16, 16, 16, 16)
+        res_l.setSpacing(10)
+
+        out_row = QHBoxLayout()
+        v_norm = QVBoxLayout()
+        v_norm.setSpacing(2)
+        lbl_n = QLabel("NORMAL DAMAGE")
+        lbl_n.setStyleSheet("font-size: 10px; font-weight: bold; color: #94A3B8;")
+        v_norm.addWidget(lbl_n)
+        self.res_normal_lbl = QLabel("0")
+        self.res_normal_lbl.setStyleSheet("font-size: 26px; font-weight: bold; color: #FAFAFA;")
+        v_norm.addWidget(self.res_normal_lbl)
+        out_row.addLayout(v_norm)
+
+        out_row.addStretch()
+
+        align_r = Qt.AlignmentFlag.AlignRight if PyQt_Version == 6 else Qt.AlignRight
+        v_crit = QVBoxLayout()
+        v_crit.setSpacing(2)
+        v_crit.setAlignment(align_r)
+        lbl_c = QLabel("CRITICAL DAMAGE")
+        lbl_c.setStyleSheet("font-size: 10px; font-weight: bold; color: #F59E0B;")
+        lbl_c.setAlignment(align_r)
+        v_crit.addWidget(lbl_c)
+        self.res_crit_lbl = QLabel("0")
+        self.res_crit_lbl.setStyleSheet("font-size: 26px; font-weight: bold; color: #FBBF24;")
+        self.res_crit_lbl.setAlignment(align_r)
+        v_crit.addWidget(self.res_crit_lbl)
+        out_row.addLayout(v_crit)
+        res_l.addLayout(out_row)
+
+        self.res_sub_lbl = QLabel("")
+        self.res_sub_lbl.setStyleSheet("font-size: 12px; color: #86EFAC; font-weight: 600;")
+        res_l.addWidget(self.res_sub_lbl)
+
+        layout.addWidget(res_box)
+
+        scroll.setWidget(container)
+        root.addWidget(scroll)
+
+        # Footer Buttons
+        f_row = QHBoxLayout()
+        reset_btn = ModernButton("Reset Defaults", "secondary")
+        reset_btn.clicked.connect(self._reset_defaults)
+        f_row.addWidget(reset_btn)
+        f_row.addStretch()
+        close_btn = ModernButton("Close", "primary")
+        close_btn.clicked.connect(self.accept)
+        f_row.addWidget(close_btn)
+        root.addLayout(f_row)
+
+    def _on_mode_changed(self, idx):
+        self.card_stack.setCurrentIndex(idx)
+        self._recalculate()
+
+    def _add_blade(self, val):
+        self._blades.append(float(val))
+        self._refresh_chips()
+        self._recalculate()
+
+    def _add_custom_blade(self):
+        val = self.blade_input.value()
+        if val != 0:
+            self._add_blade(val)
+
+    def _remove_blade(self, idx):
+        if 0 <= idx < len(self._blades):
+            self._blades.pop(idx)
+            self._refresh_chips()
+            self._recalculate()
+
+    def _clear_blades(self):
+        self._blades.clear()
+        self._refresh_chips()
+        self._recalculate()
+
+    def _add_trap(self, val):
+        self._traps.append(float(val))
+        self._refresh_chips()
+        self._recalculate()
+
+    def _add_custom_trap(self):
+        val = self.trap_input.value()
+        if val != 0:
+            self._add_trap(val)
+
+    def _remove_trap(self, idx):
+        if 0 <= idx < len(self._traps):
+            self._traps.pop(idx)
+            self._refresh_chips()
+            self._recalculate()
+
+    def _clear_traps(self):
+        self._traps.clear()
+        self._refresh_chips()
+        self._recalculate()
+
+    def _refresh_chips(self):
+        while self.blades_chip_layout.count():
+            item = self.blades_chip_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        if not self._blades:
+            self.blades_empty_lbl = QLabel("No blades added. Use buttons above to add.")
+            self.blades_empty_lbl.setStyleSheet("color: #606060; font-size: 11px; font-style: italic;")
+            self.blades_chip_layout.addWidget(self.blades_empty_lbl)
+        else:
+            for idx, b in enumerate(self._blades):
+                chip = ChipButton(f"+{int(b)}%" if b > 0 else f"{int(b)}%", lambda _, i=idx: self._remove_blade(i), is_trap=False)
+                self.blades_chip_layout.addWidget(chip)
+        self.blades_chip_layout.addStretch()
+
+        while self.traps_chip_layout.count():
+            item = self.traps_chip_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        if not self._traps:
+            self.traps_empty_lbl = QLabel("No traps added. Use buttons above to add.")
+            self.traps_empty_lbl.setStyleSheet("color: #606060; font-size: 11px; font-style: italic;")
+            self.traps_chip_layout.addWidget(self.traps_empty_lbl)
+        else:
+            for idx, t in enumerate(self._traps):
+                chip = ChipButton(f"+{int(t)}%" if t > 0 else f"{int(t)}%", lambda _, i=idx: self._remove_trap(i), is_trap=True)
+                self.traps_chip_layout.addWidget(chip)
+        self.traps_chip_layout.addStretch()
+
+    def _get_crit_mult(self):
+        txt = self.crit_combo.currentText().replace("x", "")
+        try:
+            return float(txt)
+        except ValueError:
+            return 2.0
+
+    def _recalculate(self):
+        mode = self.mode_combo.currentIndex()
+        w_pct = self.stat_pct.value()
+        w_flat = self.stat_flat.value()
+        aura = self.stat_aura.value()
+        bubble = self.stat_bubble.value()
+        enemy = self.stat_enemy.value()
+        crit_m = self._get_crit_mult()
+
+        if mode == 0:  # Single
+            base = self.single_dmg.value()
+            dmg = _calculate_damage_core(base, w_pct, w_flat, aura, bubble, enemy, self._blades, self._traps)
+            crit = math.floor(dmg * crit_m)
+            self.res_normal_lbl.setText(f"{dmg:,}")
+            self.res_crit_lbl.setText(f"{crit:,}")
+            self.res_sub_lbl.setText("")
+
+        elif mode == 1:  # Min-Max
+            b_min = self.min_dmg.value()
+            b_max = self.max_dmg.value()
+            d_min = _calculate_damage_core(b_min, w_pct, w_flat, aura, bubble, enemy, self._blades, self._traps)
+            d_max = _calculate_damage_core(b_max, w_pct, w_flat, aura, bubble, enemy, self._blades, self._traps)
+            c_min = math.floor(d_min * crit_m)
+            c_max = math.floor(d_max * crit_m)
+            self.res_normal_lbl.setText(f"{d_min:,} – {d_max:,}")
+            self.res_crit_lbl.setText(f"{c_min:,} – {c_max:,}")
+            self.res_sub_lbl.setText(f"Average: ~{math.floor((d_min + d_max)/2):,} (Crit: ~{math.floor((c_min + c_max)/2):,})")
+
+        elif mode == 2:  # DPP
+            pips = self.dpp_pips.value()
+            per_pip = self.dpp_dmg.value()
+            enchant = self.dpp_enchant.value()
+            base = per_pip * pips + enchant
+            dmg = _calculate_damage_core(base, w_pct, w_flat, aura, bubble, enemy, self._blades, self._traps)
+            crit = math.floor(dmg * crit_m)
+            self.res_normal_lbl.setText(f"{dmg:,}")
+            self.res_crit_lbl.setText(f"{crit:,}")
+            self.res_sub_lbl.setText(f"Base card: {per_pip} × {pips} pips + {enchant} enchant = {base} base dmg")
+
+        elif mode == 3:  # DoT
+            hit = self.dot_hit.value()
+            over = self.dot_over.value()
+            d_hit = _calculate_damage_core(hit, w_pct, w_flat, aura, bubble, enemy, self._blades, self._traps)
+            d_over = _calculate_damage_core(over, w_pct, w_flat, aura, bubble, enemy, self._blades, self._traps)
+            per_rnd = math.floor(d_over / 3)
+            c_hit = math.floor(d_hit * crit_m)
+            c_per_rnd = math.floor(per_rnd * crit_m)
+            total_norm = d_hit + (per_rnd * 3)
+            total_crit = c_hit + (c_per_rnd * 3)
+
+            self.res_normal_lbl.setText(f"Hit: {d_hit:,} | +{per_rnd:,}/rnd")
+            self.res_crit_lbl.setText(f"Hit: {c_hit:,} | +{c_per_rnd:,}/rnd")
+            self.res_sub_lbl.setText(f"Total Normal: {total_norm:,}  ·  Total Critical: {total_crit:,}")
+
+    def _reset_defaults(self):
+        self.single_dmg.setValue(500)
+        self.min_dmg.setValue(450)
+        self.max_dmg.setValue(520)
+        self.dpp_dmg.setValue(100)
+        self.dpp_pips.setValue(7)
+        self.dpp_enchant.setValue(0)
+        self.dot_hit.setValue(100)
+        self.dot_over.setValue(600)
+        self.stat_pct.setValue(150)
+        self.stat_flat.setValue(30)
+        self.stat_aura.setValue(25)
+        self.stat_bubble.setValue(0)
+        self.stat_enemy.setValue(0)
+        self.crit_combo.setCurrentIndex(0)
+        self._clear_blades()
+        self._clear_traps()
+        self._recalculate()
+
+    def _show_how_to_use(self):
+        dlg = QDialog(self)
+        dlg.setWindowTitle("How to Use — Damage Calculator")
+        dlg.setModal(True)
+        dlg.setFixedWidth(460)
+        dlg.setStyleSheet("QDialog { background-color: #0E0E0E; color: #FAFAFA; border: 1px solid #282828; border-radius: 8px; } QLabel { color: #DADADA; }")
+        l = QVBoxLayout(dlg)
+        l.setContentsMargins(22, 22, 22, 22)
+        l.setSpacing(14)
+        t = QLabel("Damage Calculator Guide")
+        t.setStyleSheet("font-size: 15px; font-weight: bold; color: #FFFFFF;")
+        l.addWidget(t)
+        b = QLabel(self.HOW_TO_USE)
+        b.setWordWrap(True)
+        b.setStyleSheet("font-size: 11px; color: #C0C0C0; line-height: 1.6;")
+        l.addWidget(b)
+        src = QLabel("Formula source: wizard101calculator.com")
+        src.setStyleSheet("font-size: 10px; color: #606060; font-style: italic;")
+        l.addWidget(src)
+        btn = ModernButton("Got it!", "primary")
+        btn.clicked.connect(dlg.accept)
+        l.addWidget(btn)
+        dlg.exec()
+
+
 # --- MAIN MODERN LAUNCHER ---
 class Quick101Launcher(QMainWindow):
    
@@ -3195,6 +4043,14 @@ class Quick101Launcher(QMainWindow):
         # Activate Compact Mode immediately if enabled in settings (persists across restart)
         if _cfg.get('compact_mode', False):
             QTimer.singleShot(0, lambda: self.switch_to_compact_mode(save=False))
+
+        # Discord Rich Presence
+        try:
+            self.discord_rpc = DiscordRPCManager()
+            self.discord_rpc.start()
+        except Exception as e:
+            log_event(f"Discord RPC init failed: {e}", "WARNING")
+            self.discord_rpc = None
         
     def show_update_dialog(self, version: str, notes: str, download_url: str):
         """Display dialog when a new GitHub release is available"""
@@ -4802,7 +5658,8 @@ class Quick101Launcher(QMainWindow):
 
     def open_damage_calculator(self):
         """Open Damage Calculator tool"""
-        QMessageBox.information(self, "Damage Calculator", "Damage Calculator — coming soon!")
+        dlg = DamageCalculatorDialog(self)
+        dlg.exec()
 
     def open_settings_dialog(self):
         """Open custom settings dialog with server selection, logs, clear accounts, and reset"""
@@ -4849,6 +5706,12 @@ class Quick101Launcher(QMainWindow):
             _cfg['compact_mode'] = True
         _cfg['window_position'] = [self.x(), self.y()]
         save_config(_cfg)
+
+        if hasattr(self, 'discord_rpc') and self.discord_rpc:
+            try:
+                self.discord_rpc.stop()
+            except Exception:
+                pass
         
         event.accept()
     
