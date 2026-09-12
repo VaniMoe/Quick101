@@ -1999,7 +1999,7 @@ class UpdateDialog(QDialog):
             QLabel {
                 color: #FAFAFA;
             }
-            QTextEdit {
+            QTextEdit, QTextBrowser {
                 background-color: #141414;
                 color: #D0D0D0;
                 border: 1px solid #282828;
@@ -2047,9 +2047,13 @@ class UpdateDialog(QDialog):
         notes_label.setStyleSheet("color: #A0A0A0; font-size: 11px; font-weight: 600; margin-top: 4px;")
         layout.addWidget(notes_label)
         
-        self.notes_view = QTextEdit()
+        self.notes_view = QTextBrowser()
         self.notes_view.setReadOnly(True)
-        self.notes_view.setPlainText(self.notes or "No release notes provided.")
+        self.notes_view.setOpenExternalLinks(True)
+        if hasattr(self.notes_view, 'setMarkdown'):
+            self.notes_view.setMarkdown(self.notes or "No release notes provided.")
+        else:
+            self.notes_view.setPlainText(self.notes or "No release notes provided.")
         layout.addWidget(self.notes_view)
         
         self.progress_bar = QProgressBar()
@@ -2087,9 +2091,10 @@ class UpdateDialog(QDialog):
         layout.addLayout(btn_layout)
         
         # Connect updater signals
-        self.updater.download_progress.connect(self.on_download_progress)
-        self.updater.download_finished.connect(self.on_download_finished)
-        self.updater.check_failed.connect(self.on_download_failed)
+        if self.updater:
+            self.updater.download_progress.connect(self.on_download_progress)
+            self.updater.download_finished.connect(self.on_download_finished)
+            self.updater.check_failed.connect(self.on_download_failed)
 
     def start_update(self):
         self.action_btn.setEnabled(False)
