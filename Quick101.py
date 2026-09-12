@@ -1705,20 +1705,66 @@ APP_VERSION = "2.1"
 DEFAULT_GITHUB_REPO = "VaniMoe/Quick101"
 
 def apply_update_and_restart(new_exe_path: str):
-    """Apply the downloaded .exe update and restart Quick101"""
+    """Apply the downloaded .exe update and restart Quick101 safely"""
     target_exe = sys.executable if getattr(sys, 'frozen', False) else os.path.join(os.path.expanduser('~'), 'Documents', 'code', 'Quick101.exe')
+    target_dir = os.path.dirname(os.path.abspath(target_exe))
+    current_pid = os.getpid()
     batch_file = os.path.join(APPDATA_DIR, "quick101_updater.bat")
-    log_event(f"Applying update from {new_exe_path} to {target_exe} via batch script...")
-    with open(batch_file, "w") as f:
-        f.write(f'''@echo off
-timeout /t 2 /nobreak >nul
-copy /y "{new_exe_path}" "{target_exe}"
-start "" "{target_exe}"
-del "{new_exe_path}"
-del "%~f0"
-''')
+    log_event(f"Applying update from {new_exe_path} to {target_exe} (Current PID: {current_pid})...")
+    
+    script_content = f'''@echo off
+setlocal enabledelayedexpansion
+
+set "TARGET={target_exe}"
+set "NEW={new_exe_path}"
+set "TARGET_DIR={target_dir}"
+set "OLD_PID={current_pid}"
+
+:: 1. Wait until old process completely terminates and releases file locks
+:wait_proc
+tasklist /FI "PID eq %OLD_PID%" 2>nul | find /I "%OLD_PID%" >nul
+if not errorlevel 1 (
+    timeout /t 1 /nobreak >nul
+    goto wait_proc
+)
+
+:: Extra breathing room for PyInstaller temp cleanup
+timeout /t 1 /nobreak >nul
+
+:: 2. Retry copy up to 30 times
+set RETRIES=0
+:try_copy
+copy /y "%NEW%" "%TARGET%" >nul 2>&1
+if errorlevel 1 (
+    set /a RETRIES+=1
+    if !RETRIES! geq 30 goto copy_failed
+    timeout /t 1 /nobreak >nul
+    goto try_copy
+)
+
+:: 3. Launch updated Quick101 with explicit working directory
+cd /d "%TARGET_DIR%"
+start "" "%TARGET%"
+
+:: 4. Cleanup
+del "%NEW%" 2>nul
+(goto) 2>nul & del "%~f0"
+exit /b 0
+
+:copy_failed
+msg * "Quick101 Update could not replace the executable file. Please restart Quick101 manually."
+exit /b 1
+'''
+    try:
+        with open(batch_file, "w", encoding="utf-8") as f:
+            f.write(script_content)
+    except Exception as e:
+        log_event(f"Failed to write updater batch: {e}", "ERROR")
+        return
+        
     subprocess.Popen(['cmd.exe', '/c', batch_file], creationflags=0x08000000 if os.name == 'nt' else 0)
-    QApplication.quit()
+    # Force instant process termination so the file lock on target_exe is released immediately
+    os._exit(0)
 
 class GitHubUpdater(QObject):
     update_available = pyqtSignal(str, str, str)  # version, body, download_url
