@@ -2276,29 +2276,36 @@ class PetCalculatorDialog(QDialog):
     # Talent formulas (inputs: strength, intellect, agility, will, power)
     TALENTS = [
         # (display_name, unit, lambda)
-        ("Spell-Proof",         "%",   lambda s,i,a,w,p: ((2*s + 2*a + p) / 125) / 100),
-        ("Spell-Defying",       "%",   lambda s,i,a,w,p: ((2*s + 2*a + p) / 250) / 100),
-        ("Pain-Giver",          "%",   lambda s,i,a,w,p: ((2*s + 2*w + p) / 200) / 100),
-        ("Spell-Dealer",        "%",   lambda s,i,a,w,p: ((2*s + 2*w + p) * 0.0075) / 100),
-        ("Pain-Bringer",        "%",   lambda s,i,a,w,p: ((2*s + 2*w + p) / 400) / 100),
-        ("Ward",                "%",   lambda s,i,a,w,p: ((2*s + 2*a + p) * 0.012) / 100),
-        ("Crit Striker",        "",    lambda s,i,a,w,p: (2*a + 2*w + p) * 0.024),
-        ("Crit Hitter",         "",    lambda s,i,a,w,p: (2*a + 2*w + p) * 0.02),
-        ("School Assailant",    "",    lambda s,i,a,w,p: (2*a + 2*w + p) / 40),
-        ("School Striker",      "",    lambda s,i,a,w,p: (2*a + 2*w + p) * 0.02),
-        ("Defender",            "",    lambda s,i,a,w,p: (2*i + 2*w + p) * 0.024),
-        ("Blocker",             "",    lambda s,i,a,w,p: (2*i + 2*w + p) * 0.02),
-        ("Sniper",              "%",   lambda s,i,a,w,p: ((2*i + 2*a + p) * 0.0075) / 100),
-        ("Sharp Shot",          "%",   lambda s,i,a,w,p: ((2*i + 2*a + p) / 200) / 100),
-        ("Eagle Eye",           "%",   lambda s,i,a,w,p: ((2*i + 2*a + p) / 400) / 100),
-        ("Breaker",             "%",   lambda s,i,a,w,p: ((2*s + 2*a + p) / 400) / 100),
-        ("Piercer",             "%",   lambda s,i,a,w,p: ((2*s + 2*a + p) * 0.0015) / 100),
-        ("Stun Resist",         "%",   lambda s,i,a,w,p: ((2*s + 2*i + p) / 250) / 100),
-        ("Stun Recalibration",  "%",   lambda s,i,a,w,p: ((2*s + 2*i + p) / 125) / 100),
-        ("Lively",              "%",   lambda s,i,a,w,p: ((2*i + 2*a + p) * 0.0065) / 100),
-        ("Healer",              "%",   lambda s,i,a,w,p: ((2*s + 2*w + p) * 0.003) / 100),
-        ("Medic",               "%",   lambda s,i,a,w,p: ((2*s + 2*w + p) * 0.0065) / 100),
-        ("Healthy",             "%",   lambda s,i,a,w,p: ((2*i + 2*a + p) * 0.003) / 100),
+        # ── Damage ──────────────────────────────────────────────────
+        ("Any School Dealer",           "%",   lambda s,i,a,w,p: ((2*s + 2*w + p) * 0.0075) / 100),
+        ("Any School Giver / Pain-Giver","%",  lambda s,i,a,w,p: ((2*s + 2*w + p) / 200) / 100),
+        ("Any School Boon / Pain-Bringer","%", lambda s,i,a,w,p: ((2*s + 2*w + p) / 400) / 100),
+        # ── Armor Piercing ───────────────────────────────────────────
+        ("Piercer",                     "%",   lambda s,i,a,w,p: ((2*s + 2*a + p) * 0.0015) / 100),
+        ("Breaker (Armor)",             "%",   lambda s,i,a,w,p: ((2*s + 2*a + p) / 400) / 100),
+        # ── Defense ─────────────────────────────────────────────────
+        ("Spell-Proof",                 "%",   lambda s,i,a,w,p: ((2*s + 2*a + p) / 125) / 100),
+        ("Spell-Defying",               "%",   lambda s,i,a,w,p: ((2*s + 2*a + p) / 250) / 100),
+        ("Ward",                        "%",   lambda s,i,a,w,p: ((2*s + 2*a + p) * 0.012) / 100),
+        # ── Critical ────────────────────────────────────────────────
+        ("Crit Striker",                "",    lambda s,i,a,w,p: (2*a + 2*w + p) * 0.024),
+        ("Crit Hitter",                 "",    lambda s,i,a,w,p: (2*a + 2*w + p) * 0.02),
+        ("School Assailant",            "",    lambda s,i,a,w,p: (2*a + 2*w + p) / 40),
+        ("School Striker",              "",    lambda s,i,a,w,p: (2*a + 2*w + p) * 0.02),
+        # ── Block ────────────────────────────────────────────────────
+        ("Defender",                    "",    lambda s,i,a,w,p: (2*i + 2*w + p) * 0.024),
+        ("Blocker",                     "",    lambda s,i,a,w,p: (2*i + 2*w + p) * 0.02),
+        # ── Accuracy ─────────────────────────────────────────────────
+        ("Sniper",                      "%",   lambda s,i,a,w,p: ((2*i + 2*a + p) * 0.0075) / 100),
+        ("Sharp Shot",                  "%",   lambda s,i,a,w,p: ((2*i + 2*a + p) / 200) / 100),
+        ("Eagle Eye",                   "%",   lambda s,i,a,w,p: ((2*i + 2*a + p) / 400) / 100),
+        # ── Utility ──────────────────────────────────────────────────
+        ("Stun Resist",                 "%",   lambda s,i,a,w,p: ((2*s + 2*i + p) / 250) / 100),
+        ("Stun Recalibration",          "%",   lambda s,i,a,w,p: ((2*s + 2*i + p) / 125) / 100),
+        ("Lively",                      "%",   lambda s,i,a,w,p: ((2*i + 2*a + p) * 0.0065) / 100),
+        ("Healer",                      "%",   lambda s,i,a,w,p: ((2*s + 2*w + p) * 0.003) / 100),
+        ("Medic",                       "%",   lambda s,i,a,w,p: ((2*s + 2*w + p) * 0.0065) / 100),
+        ("Healthy",                     "%",   lambda s,i,a,w,p: ((2*i + 2*a + p) * 0.003) / 100),
     ]
 
     _FIELD_STYLE = """
