@@ -1704,74 +1704,22 @@ class CustomTitleBar(QWidget):
 APP_VERSION = "2.2"
 DEFAULT_GITHUB_REPO = "VaniMoe/Quick101"
 
-def apply_update_and_restart(new_exe_path: str):
-    """Apply the downloaded .exe update and restart Quick101 safely via PowerShell updater"""
+def apply_update(new_exe_path: str) -> bool:
+    """Replace the running EXE with the newly downloaded one. Returns True on success."""
     target_exe = sys.executable if getattr(sys, 'frozen', False) else os.path.join(os.path.expanduser('~'), 'Documents', 'code', 'Quick101.exe')
-    target_dir = os.path.dirname(os.path.abspath(target_exe))
-    current_pid = os.getpid()
-    ps_script = os.path.join(APPDATA_DIR, "quick101_updater.ps1")
-    log_event(f"Applying update from {new_exe_path} to {target_exe} (Current PID: {current_pid})...")
-    
-    ps_content = f'''
-$target = '{target_exe}'
-$new = '{new_exe_path}'
-$targetDir = '{target_dir}'
-$oldPid = {current_pid}
-
-# 1. Wait until old process terminates
-while (Get-Process -Id $oldPid -ErrorAction SilentlyContinue) {{
-    Start-Sleep -Milliseconds 400
-}}
-Start-Sleep -Milliseconds 600
-
-# 2. Copy with retry up to 30 times
-$copied = $false
-for ($i = 0; $i -lt 30; $i++) {{
-    try {{
-        Copy-Item -Path $new -Destination $target -Force -ErrorAction Stop
-        $copied = $true
-        break
-    }} catch {{
-        Start-Sleep -Milliseconds 400
-    }}
-}}
-
-# 3. Clean PyInstaller environment variables
-[Environment]::SetEnvironmentVariable('_MEIPASS2', $null, 'Process')
-[Environment]::SetEnvironmentVariable('_MEIPASS', $null, 'Process')
-[Environment]::SetEnvironmentVariable('PYTHONHOME', $null, 'Process')
-[Environment]::SetEnvironmentVariable('PYTHONPATH', $null, 'Process')
-
-# 4. Relaunch updated Quick101
-if ($copied) {{
-    Start-Process -FilePath $target -WorkingDirectory $targetDir
-}}
-
-# 5. Clean up
-Remove-Item -Path $new -Force -ErrorAction SilentlyContinue
-'''
+    log_event(f"Applying update: replacing {target_exe} with {new_exe_path}")
     try:
-        with open(ps_script, "w", encoding="utf-8") as f:
-            f.write(ps_content)
+        import shutil
+        shutil.copy2(new_exe_path, target_exe)
+        log_event("Update applied successfully. Awaiting manual restart.")
+        try:
+            os.remove(new_exe_path)
+        except Exception:
+            pass
+        return True
     except Exception as e:
-        log_event(f"Failed to write updater script: {e}", "ERROR")
-        return
-        
-    cmd = [
-        'powershell.exe',
-        '-WindowStyle', 'Hidden',
-        '-NoProfile',
-        '-ExecutionPolicy', 'Bypass',
-        '-File', ps_script
-    ]
-    clean_env = os.environ.copy()
-    clean_env.pop('_MEIPASS2', None)
-    clean_env.pop('_MEIPASS', None)
-    clean_env.pop('PYTHONHOME', None)
-    clean_env.pop('PYTHONPATH', None)
-    subprocess.Popen(cmd, env=clean_env, creationflags=0x08000000 if os.name == 'nt' else 0)
-    # Force instant process termination so the file lock on target_exe is released immediately
-    os._exit(0)
+        log_event(f"Failed to replace EXE: {e}", "ERROR")
+        return False
 
 class GitHubUpdater(QObject):
     update_available = pyqtSignal(str, str, str)  # version, body, download_url
@@ -1996,9 +1944,27 @@ class UpdateDialog(QDialog):
         self.status_lbl.setText(f"Downloading update: {percent}%")
 
     def on_download_finished(self, new_exe_path: str):
-        self.status_lbl.setText("Download complete! Restarting Quick101...")
         self.progress_bar.setValue(100)
-        QTimer.singleShot(600, lambda: apply_update_and_restart(new_exe_path))
+        success = apply_update(new_exe_path)
+        if success:
+            self.status_lbl.setText("Update installed! Please restart Quick101.")
+            self.status_lbl.setStyleSheet("color: #86EFAC; font-size: 11px;")
+            self.action_btn.setText("Close")
+            self.action_btn.setEnabled(True)
+            self.action_btn.clicked.disconnect()
+            self.action_btn.clicked.connect(self.accept)
+            self.cancel_btn.hide()
+            QMessageBox.information(
+                self, "Update Installed",
+                "The update has been downloaded and installed.\n\n"
+                "Please close and reopen Quick101 to use the new version."
+            )
+        else:
+            self.status_lbl.setText("Failed to replace the EXE. Is Quick101 running from a write-protected location?")
+            self.status_lbl.setStyleSheet("color: #FFA0A0; font-size: 11px;")
+            self.action_btn.setEnabled(True)
+            self.action_btn.setText("Retry")
+            self.cancel_btn.setEnabled(True)
 
     def on_download_failed(self, err: str):
         self.status_lbl.setText(f"Update failed: {err}")
