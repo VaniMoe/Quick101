@@ -1715,6 +1715,12 @@ def apply_update_and_restart(new_exe_path: str):
     script_content = f'''@echo off
 setlocal enabledelayedexpansion
 
+:: Crucial for PyInstaller: Unset parent temp dir so child process extracts its own DLLs fresh!
+set _MEIPASS2=
+set _MEIPASS=
+set PYTHONHOME=
+set PYTHONPATH=
+
 set "TARGET={target_exe}"
 set "NEW={new_exe_path}"
 set "TARGET_DIR={target_dir}"
@@ -1742,7 +1748,7 @@ if errorlevel 1 (
     goto try_copy
 )
 
-:: 3. Launch updated Quick101 with explicit working directory
+:: 3. Launch updated Quick101 with explicit working directory and clean environment
 cd /d "%TARGET_DIR%"
 start "" "%TARGET%"
 
@@ -1762,7 +1768,12 @@ exit /b 1
         log_event(f"Failed to write updater batch: {e}", "ERROR")
         return
         
-    subprocess.Popen(['cmd.exe', '/c', batch_file], creationflags=0x08000000 if os.name == 'nt' else 0)
+    clean_env = os.environ.copy()
+    clean_env.pop('_MEIPASS2', None)
+    clean_env.pop('_MEIPASS', None)
+    clean_env.pop('PYTHONHOME', None)
+    clean_env.pop('PYTHONPATH', None)
+    subprocess.Popen(['cmd.exe', '/c', batch_file], env=clean_env, creationflags=0x08000000 if os.name == 'nt' else 0)
     # Force instant process termination so the file lock on target_exe is released immediately
     os._exit(0)
 
