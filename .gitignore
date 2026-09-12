@@ -1,0 +1,29 @@
+﻿# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# PyInstaller build artifacts
+build/
+dist/
+*.manifest
+*.spec.bak
+
+# User configuration & private credentials (DO NOT COMMIT!)
+accounts.yml
+launcher_config.json
+quick101_updater.bat
+*.log
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# IDE & OS
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini

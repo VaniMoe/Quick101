@@ -1,0 +1,8 @@
+﻿# Quick101 Example Account Configuration
+# Place your real accounts in accounts.yml or use the Quick101 in-app GUI to add accounts.
+Main:
+  SampleWizard:
+    username: "your_username_here"
+    password: "your_password_here"
+    subtext: "Level 170 Storm"
+    steam: false
