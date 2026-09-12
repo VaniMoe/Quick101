@@ -1,4 +1,4 @@
-﻿# -*- mode: python ; coding: utf-8 -*-
+# -*- mode: python ; coding: utf-8 -*-
 
 a = Analysis(
     ['Quick101.py'],
@@ -6,7 +6,9 @@ a = Analysis(
     binaries=[],
     datas=[
         ('Quick101.ico', '.'),
-        ('Quick101.png', '.')
+        ('Quick101.png', '.'),
+        ('pets_data.json', '.'),
+        ('pet_data.py', '.')
     ],
     hiddenimports=['PyQt6.QtSvg'],
     hookspath=[],

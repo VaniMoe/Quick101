@@ -50,6 +50,17 @@ else:
 APPDATA_DIR = os.path.join(os.environ.get('APPDATA', os.path.expanduser('~')), 'Quick101')
 os.makedirs(APPDATA_DIR, exist_ok=True)
 
+# --- PET WOW DATABASE ---
+try:
+    from pet_data import PET_DATABASE
+except ImportError:
+    try:
+        _pdata_file = os.path.join(BASE_DIR, 'pets_data.json')
+        with open(_pdata_file, 'r', encoding='utf-8') as _f:
+            PET_DATABASE = json.load(_f)
+    except Exception:
+        PET_DATABASE = []
+
 # Auto-migration: copy existing accounts/config from previous locations to APPDATA_DIR
 for _search_loc in [
     BASE_DIR,
@@ -1717,7 +1728,7 @@ class CustomTitleBar(QWidget):
             self.parent_window.toggle_maximize()
 
 # --- AUTO UPDATER VIA GITHUB ---
-APP_VERSION = "2.3"
+APP_VERSION = "2.4"
 DEFAULT_GITHUB_REPO = "VaniMoe/Quick101"
 
 def apply_update(new_exe_path: str) -> bool:
@@ -2557,6 +2568,599 @@ class PetCalculatorDialog(QDialog):
         ok_btn = ModernButton("Got it!", "primary")
         ok_btn.clicked.connect(dlg.accept)
         layout.addWidget(ok_btn)
+        dlg.exec()
+
+
+
+# --- PET WOW RETURNER DIALOG ---
+class PetWoWReturnerDialog(QDialog):
+    """Wizard101 Pet Return Chance Calculator & Pet Tome
+    Based on petbodyw101.vercel.app formulas and pet wow factors"""
+
+    SCHOOL_COLORS = {
+        "Fire": "#EF4444",
+        "Ice": "#38BDF8",
+        "Storm": "#A855F7",
+        "Life": "#22C55E",
+        "Myth": "#FACC15",
+        "Death": "#94A3B8",
+        "Balance": "#FB923C",
+    }
+
+    HOW_TO_USE = (
+        "Wizard101 Pet Hatching & Wow Factor Guide\n\n"
+        "1. Pet Wow Factor (Hidden Stat)\n"
+        "Every pet has a hidden 'Wow Factor' (0 to 10) assigned by KingsIsle.\n"
+        "• LOWER wow factor = HIGHER chance of receiving that body back.\n"
+        "• HIGHER wow factor = LOWER chance (rarer body).\n\n"
+        "2. Standard Hatching Odds Formula:\n"
+        "   Pet 1 Chance = (11 - Pet1.WowFactor) / (22 - (Pet1.WowFactor + Pet2.WowFactor)) * 100\n"
+        "   Pet 2 Chance = (11 - Pet2.WowFactor) / (22 - (Pet1.WowFactor + Pet2.WowFactor)) * 100\n\n"
+        "3. Exclusive Pet Body Logic (Crucial Rule!):\n"
+        "• Placing an Exclusive Pet on the RIGHT slot in a Self-Hatch will\n"
+        "  ALWAYS return the body on the LEFT (100% chance for Pet 1)!\n"
+        "  Even if the left body is also Exclusive, Retired, or Unhatchable.\n"
+        "• If you WANT the Exclusive body back, you MUST place it on the LEFT\n"
+        "  in a self-hatch, or use it as your selected pet in Kiosk hatches.\n\n"
+        "Data source: petbodyw101.vercel.app"
+    )
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Quick101 — Pet WoW Returner")
+        self.setModal(True)
+        self.resize(880, 680)
+        self.setMinimumSize(800, 600)
+        self._pets = PET_DATABASE if 'PET_DATABASE' in globals() and PET_DATABASE else []
+        self._pet_map = {p["name"]: p for p in self._pets}
+        self._pet_names = sorted(list(self._pet_map.keys()), key=lambda s: s.lower())
+
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #0E0E0E;
+                color: #FAFAFA;
+                border: 1px solid #282828;
+                border-radius: 8px;
+            }
+            QLabel { color: #FAFAFA; }
+            QTabWidget::pane {
+                border: 1px solid #242424;
+                background: #0E0E0E;
+                border-radius: 6px;
+                top: -1px;
+            }
+            QTabBar::tab {
+                background: #141414;
+                color: #888888;
+                border: 1px solid #242424;
+                border-bottom: none;
+                padding: 8px 18px;
+                margin-right: 4px;
+                border-top-left-radius: 6px;
+                border-top-right-radius: 6px;
+                font-weight: 600;
+                font-size: 12px;
+            }
+            QTabBar::tab:selected {
+                background: #1F1F1F;
+                color: #FAFAFA;
+                border-bottom: 2px solid #3B82F6;
+            }
+            QTabBar::tab:hover:!selected {
+                background: #181818;
+                color: #C0C0C0;
+            }
+            QGroupBox {
+                color: #FAFAFA;
+                font-size: 11px;
+                font-weight: 700;
+                border: 1px solid #242424;
+                border-radius: 6px;
+                margin-top: 12px;
+                padding-top: 14px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 6px;
+            }
+            QLineEdit, QComboBox {
+                background-color: #141414;
+                color: #FAFAFA;
+                border: 1px solid #2A2A2A;
+                border-radius: 5px;
+                padding: 6px 10px;
+                font-size: 12px;
+            }
+            QLineEdit:focus, QComboBox:focus {
+                border: 1px solid #606060;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #161616;
+                color: #FAFAFA;
+                border: 1px solid #333333;
+                selection-background-color: #2A2A2A;
+                selection-color: #FFFFFF;
+                outline: none;
+            }
+            QTableWidget {
+                background-color: #0A0A0A;
+                color: #FAFAFA;
+                border: 1px solid #242424;
+                border-radius: 5px;
+                gridline-color: #1C1C1C;
+                font-size: 11px;
+            }
+            QTableWidget::item { padding: 4px 8px; }
+            QTableWidget::item:selected {
+                background-color: #262626;
+                color: #FFFFFF;
+            }
+            QHeaderView::section {
+                background-color: #141414;
+                color: #909090;
+                border: none;
+                border-bottom: 1px solid #282828;
+                padding: 6px 8px;
+                font-size: 10px;
+                font-weight: 700;
+                text-transform: uppercase;
+            }
+            QScrollBar:vertical {
+                background: #0E0E0E;
+                width: 8px;
+                border-radius: 4px;
+            }
+            QScrollBar::handle:vertical {
+                background: #333333;
+                border-radius: 4px;
+            }
+        """)
+
+        self._build_ui()
+
+    def _build_ui(self):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(18, 18, 18, 18)
+        root.setSpacing(12)
+
+        # Title bar
+        title_row = QHBoxLayout()
+        v_title = QVBoxLayout()
+        v_title.setSpacing(2)
+        title_lbl = QLabel("Wizard101 Pet WoW Returner")
+        title_lbl.setStyleSheet("font-size: 16px; font-weight: bold; color: #FFFFFF;")
+        v_title.addWidget(title_lbl)
+        sub_lbl = QLabel("Pet body return odds & hatching calculator (petbodyw101.vercel.app)")
+        sub_lbl.setStyleSheet("color: #707070; font-size: 11px;")
+        v_title.addWidget(sub_lbl)
+        title_row.addLayout(v_title)
+        title_row.addStretch()
+
+        help_btn = ModernButton("How to Use", "secondary")
+        help_btn.clicked.connect(self._show_how_to_use)
+        title_row.addWidget(help_btn)
+        root.addLayout(title_row)
+
+        # Tabs
+        self.tabs = QTabWidget()
+        self._tab_calc = QWidget()
+        self._tab_tome = QWidget()
+
+        self._build_calc_tab()
+        self._build_tome_tab()
+
+        self.tabs.addTab(self._tab_calc, "Return Chance Calculator")
+        self.tabs.addTab(self._tab_tome, f"Pet Tome ({len(self._pets)} Pets)")
+        root.addWidget(self.tabs)
+
+        # Footer
+        footer_row = QHBoxLayout()
+        db_info = QLabel(f"Database: {len(self._pets)} pets loaded from petbodyw101.vercel.app")
+        db_info.setStyleSheet("color: #555555; font-size: 10px;")
+        footer_row.addWidget(db_info)
+        footer_row.addStretch()
+        close_btn = ModernButton("Close", "primary")
+        close_btn.clicked.connect(self.accept)
+        footer_row.addWidget(close_btn)
+        root.addLayout(footer_row)
+
+    def _build_calc_tab(self):
+        layout = QVBoxLayout(self._tab_calc)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(14)
+
+        # Slots row: Pet 1, Swap button, Pet 2
+        slots_layout = QHBoxLayout()
+        slots_layout.setSpacing(12)
+
+        # Pet 1 Card
+        self.p1_box = QGroupBox("PET 1 (LEFT SLOT / YOUR PET)")
+        p1_l = QVBoxLayout(self.p1_box)
+        p1_l.setSpacing(8)
+        self.combo1 = QComboBox()
+        self._setup_combobox(self.combo1)
+        self.combo1.currentTextChanged.connect(self._on_pet1_changed)
+        p1_l.addWidget(self.combo1)
+        self.card1_details = QLabel("Select a pet above to view stats")
+        self.card1_details.setStyleSheet("font-size: 11px; color: #888888; padding: 6px;")
+        p1_l.addWidget(self.card1_details)
+        slots_layout.addWidget(self.p1_box)
+
+        # Swap button
+        swap_col = QVBoxLayout()
+        swap_col.addStretch()
+        self.swap_btn = ModernButton("⇄ Swap", "secondary")
+        self.swap_btn.setToolTip("Swap Left and Right pet slots")
+        self.swap_btn.clicked.connect(self._swap_pets)
+        swap_col.addWidget(self.swap_btn)
+        swap_col.addStretch()
+        slots_layout.addLayout(swap_col)
+
+        # Pet 2 Card
+        self.p2_box = QGroupBox("PET 2 (RIGHT SLOT / OTHER OR KIOSK)")
+        p2_l = QVBoxLayout(self.p2_box)
+        p2_l.setSpacing(8)
+        self.combo2 = QComboBox()
+        self._setup_combobox(self.combo2)
+        self.combo2.currentTextChanged.connect(self._on_pet2_changed)
+        p2_l.addWidget(self.combo2)
+        self.card2_details = QLabel("Select a pet above to view stats")
+        self.card2_details.setStyleSheet("font-size: 11px; color: #888888; padding: 6px;")
+        p2_l.addWidget(self.card2_details)
+        slots_layout.addWidget(self.p2_box)
+
+        layout.addLayout(slots_layout)
+
+        # Results Card
+        self.results_group = QGroupBox("RETURN ODDS CALCULATION")
+        res_l = QVBoxLayout(self.results_group)
+        res_l.setContentsMargins(16, 16, 16, 16)
+        res_l.setSpacing(12)
+
+        self.odds_display = QHBoxLayout()
+        self.odds_lbl_1 = QLabel("Pet 1: —")
+        self.odds_lbl_1.setStyleSheet("font-size: 20px; font-weight: bold; color: #888888;")
+        self.odds_lbl_2 = QLabel("Pet 2: —")
+        self.odds_lbl_2.setStyleSheet("font-size: 20px; font-weight: bold; color: #888888;")
+        align_r = Qt.AlignmentFlag.AlignRight if PyQt_Version == 6 else Qt.AlignRight
+        self.odds_lbl_2.setAlignment(align_r)
+        self.odds_display.addWidget(self.odds_lbl_1)
+        self.odds_display.addStretch()
+        self.odds_display.addWidget(self.odds_lbl_2)
+        res_l.addLayout(self.odds_display)
+
+        self.rule_banner = QLabel("Please select both pets to calculate hatching return chances.")
+        self.rule_banner.setWordWrap(True)
+        self.rule_banner.setStyleSheet("""
+            background-color: #141414;
+            color: #C0C0C0;
+            border: 1px solid #282828;
+            border-radius: 6px;
+            padding: 10px 14px;
+            font-size: 11px;
+            line-height: 1.4;
+        """)
+        res_l.addWidget(self.rule_banner)
+        layout.addWidget(self.results_group)
+        layout.addStretch()
+
+    def _setup_combobox(self, combo):
+        combo.setEditable(True)
+        insert_mode = QComboBox.InsertPolicy.NoInsert if PyQt_Version == 6 else QComboBox.NoInsert
+        combo.setInsertPolicy(insert_mode)
+        combo.addItem("-- Select or type pet name --", "")
+        for name in self._pet_names:
+            combo.addItem(name, name)
+        completer = QCompleter(self._pet_names, combo)
+        case_mode = Qt.CaseSensitivity.CaseInsensitive if PyQt_Version == 6 else Qt.CaseInsensitive
+        match_mode = Qt.MatchFlag.MatchContains if PyQt_Version == 6 else Qt.MatchContains
+        completer.setCaseSensitivity(case_mode)
+        completer.setFilterMode(match_mode)
+        combo.setCompleter(completer)
+
+    def _format_pet_card(self, pet):
+        if not pet:
+            return "Select a pet above to view stats"
+        school = pet.get("school", "Unknown")
+        color = self.SCHOOL_COLORS.get(school, "#FAFAFA")
+        wf = pet.get("wowFactor")
+        wf_str = f"<b>{wf} / 10</b>" if wf is not None else "<i>Unknown</i>"
+        egg = pet.get("eggName", "Unknown")
+        exclusive = pet.get("exclusive", False)
+        unhatchable = pet.get("unhatchable", False)
+        retired = pet.get("retired", False)
+        special = pet.get("specialBody", False)
+
+        excl_tag = "<span style='color: #F59E0B; font-weight: bold;'>Yes (Special Rules)</span>" if exclusive else "<span style='color: #10B981;'>No</span>"
+        tags = []
+        if unhatchable:
+            tags.append("<span style='color: #EF4444;'>Unhatchable</span>")
+        if retired:
+            tags.append("<span style='color: #94A3B8;'>Retired</span>")
+        if special:
+            tags.append("<span style='color: #A855F7;'>Special Body</span>")
+        extra_tags = " · ".join(tags) if tags else "Standard Body"
+
+        return (
+            f"<div style='line-height: 1.5;'>"
+            f"School: <b style='color: {color};'>● {school}</b><br>"
+            f"Wow Factor: {wf_str}<br>"
+            f"Egg Type: <span style='color: #C0C0C0;'>{egg}</span><br>"
+            f"Exclusive: {excl_tag}<br>"
+            f"Status: <span style='font-size: 10px;'>{extra_tags}</span>"
+            f"</div>"
+        )
+
+    def _on_pet1_changed(self, text):
+        pet = self._pet_map.get(text.strip())
+        self.card1_details.setText(self._format_pet_card(pet))
+        self._recalculate()
+
+    def _on_pet2_changed(self, text):
+        pet = self._pet_map.get(text.strip())
+        self.card2_details.setText(self._format_pet_card(pet))
+        self._recalculate()
+
+    def _swap_pets(self):
+        t1 = self.combo1.currentText()
+        t2 = self.combo2.currentText()
+        self.combo1.blockSignals(True)
+        self.combo2.blockSignals(True)
+        self.combo1.setCurrentText(t2)
+        self.combo2.setCurrentText(t1)
+        self.combo1.blockSignals(False)
+        self.combo2.blockSignals(False)
+        self._on_pet1_changed(self.combo1.currentText())
+        self._on_pet2_changed(self.combo2.currentText())
+
+    def _recalculate(self):
+        p1 = self._pet_map.get(self.combo1.currentText().strip())
+        p2 = self._pet_map.get(self.combo2.currentText().strip())
+
+        if not p1 or not p2:
+            self.odds_lbl_1.setText("Pet 1: —")
+            self.odds_lbl_1.setStyleSheet("font-size: 20px; font-weight: bold; color: #888888;")
+            self.odds_lbl_2.setText("Pet 2: —")
+            self.odds_lbl_2.setStyleSheet("font-size: 20px; font-weight: bold; color: #888888;")
+            self.rule_banner.setText("Please select both pets to calculate hatching return chances.")
+            self.rule_banner.setStyleSheet("background-color: #141414; color: #888888; border: 1px solid #242424; border-radius: 6px; padding: 10px 14px; font-size: 11px;")
+            return
+
+        # Exclusive rule: Placing Exclusive pet on Right slot (Pet 2) ALWAYS returns Left pet (Pet 1)
+        if p2.get("exclusive"):
+            self.odds_lbl_1.setText(f"{p1['name']}: 100%")
+            self.odds_lbl_1.setStyleSheet("font-size: 20px; font-weight: bold; color: #22C55E;")
+            self.odds_lbl_2.setText(f"{p2['name']}: 0%")
+            self.odds_lbl_2.setStyleSheet("font-size: 20px; font-weight: bold; color: #EF4444;")
+            self.rule_banner.setText(
+                "⚠️ <b>EXCLUSIVE BODY RULE:</b> Pet 2 is an <b>Exclusive Pet</b> placed on the Right slot!\n"
+                "In a self-hatch, placing an exclusive body on the Right ALWAYS returns the Left body (100% chance for Pet 1), "
+                "even if the left body is also Exclusive, Retired, or Unhatchable."
+            )
+            self.rule_banner.setStyleSheet("background-color: #241408; color: #F59E0B; border: 1px solid #78350F; border-radius: 6px; padding: 10px 14px; font-size: 11px;")
+            return
+
+        wf1 = p1.get("wowFactor")
+        wf2 = p2.get("wowFactor")
+        if wf1 is None or wf2 is None:
+            self.odds_lbl_1.setText("Unknown")
+            self.odds_lbl_2.setText("Unknown")
+            self.rule_banner.setText("Wow Factor is unknown for one or both selected pets. Cannot calculate exact odds.")
+            self.rule_banner.setStyleSheet("background-color: #1E1212; color: #F87171; border: 1px solid #7F1D1D; border-radius: 6px; padding: 10px 14px; font-size: 11px;")
+            return
+
+        denom = 22 - (wf1 + wf2)
+        if denom <= 0:
+            c1, c2 = 50, 50
+        else:
+            c1 = round((11 - wf1) / denom * 100)
+            c2 = round((11 - wf2) / denom * 100)
+
+        # Color coding: higher chance is green, lower is red/orange
+        if c1 > c2:
+            col1 = "#22C55E"
+            col2 = "#EF4444"
+        elif c2 > c1:
+            col1 = "#EF4444"
+            col2 = "#22C55E"
+        else:
+            col1 = "#F59E0B"
+            col2 = "#F59E0B"
+
+        self.odds_lbl_1.setText(f"{p1['name']}: {c1}%")
+        self.odds_lbl_1.setStyleSheet(f"font-size: 20px; font-weight: bold; color: {col1};")
+        self.odds_lbl_2.setText(f"{p2['name']}: {c2}%")
+        self.odds_lbl_2.setStyleSheet(f"font-size: 20px; font-weight: bold; color: {col2};")
+
+        self.rule_banner.setText(
+            f"<b>Hatching Formula:</b><br>"
+            f"• <b>Pet 1 ({p1['name']}):</b> (11 - {wf1}) / (22 - ({wf1} + {wf2})) = <b>{c1}%</b><br>"
+            f"• <b>Pet 2 ({p2['name']}):</b> (11 - {wf2}) / (22 - ({wf1} + {wf2})) = <b>{c2}%</b><br>"
+            f"<i>Remember: Lower Wow Factor = Higher chance of being returned!</i>"
+        )
+        self.rule_banner.setStyleSheet("background-color: #0E1A12; color: #86EFAC; border: 1px solid #14532D; border-radius: 6px; padding: 10px 14px; font-size: 11px;")
+
+    def _build_tome_tab(self):
+        layout = QVBoxLayout(self._tab_tome)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(10)
+
+        # Filter row
+        filter_row = QHBoxLayout()
+        filter_row.setSpacing(8)
+
+        self.tome_search = QLineEdit()
+        self.tome_search.setPlaceholderText("Search pets by name...")
+        self.tome_search.textChanged.connect(self._filter_tome)
+        filter_row.addWidget(self.tome_search, 2)
+
+        self.tome_school_filter = QComboBox()
+        self.tome_school_filter.addItem("All Schools", "")
+        for s in ["Fire", "Ice", "Storm", "Life", "Myth", "Death", "Balance"]:
+            self.tome_school_filter.addItem(s, s)
+        self.tome_school_filter.currentTextChanged.connect(self._filter_tome)
+        filter_row.addWidget(self.tome_school_filter, 1)
+
+        self.tome_wow_filter = QComboBox()
+        self.tome_wow_filter.addItem("All Wow Factors", "")
+        for i in range(11):
+            self.tome_wow_filter.addItem(f"Wow Factor {i}", i)
+        self.tome_wow_filter.currentTextChanged.connect(self._filter_tome)
+        filter_row.addWidget(self.tome_wow_filter, 1)
+
+        self.tome_excl_filter = QComboBox()
+        self.tome_excl_filter.addItem("All Bodies", "")
+        self.tome_excl_filter.addItem("Exclusive Only", "exclusive")
+        self.tome_excl_filter.addItem("Non-Exclusive", "non-exclusive")
+        self.tome_excl_filter.currentTextChanged.connect(self._filter_tome)
+        filter_row.addWidget(self.tome_excl_filter, 1)
+
+        layout.addLayout(filter_row)
+
+        # Action bar: selection buttons + count
+        action_row = QHBoxLayout()
+        self.tome_count_lbl = QLabel(f"Showing {len(self._pets)} of {len(self._pets)} pets")
+        self.tome_count_lbl.setStyleSheet("color: #888888; font-size: 11px;")
+        action_row.addWidget(self.tome_count_lbl)
+        action_row.addStretch()
+
+        set_p1_btn = ModernButton("Use as Pet 1", "secondary")
+        set_p1_btn.clicked.connect(lambda: self._use_selected_pet(1))
+        action_row.addWidget(set_p1_btn)
+
+        set_p2_btn = ModernButton("Use as Pet 2", "secondary")
+        set_p2_btn.clicked.connect(lambda: self._use_selected_pet(2))
+        action_row.addWidget(set_p2_btn)
+        layout.addLayout(action_row)
+
+        # Tome Table
+        self.tome_table = QTableWidget(0, 8)
+        headers = ["Pet Name", "School", "Wow Factor", "Egg Name", "Exclusive", "Unhatchable", "Retired", "Special Body"]
+        self.tome_table.setHorizontalHeaderLabels(headers)
+        stretch_mode = QHeaderView.ResizeMode.Stretch if PyQt_Version == 6 else QHeaderView.Stretch
+        resize_mode = QHeaderView.ResizeMode.ResizeToContents if PyQt_Version == 6 else QHeaderView.ResizeToContents
+        self.tome_table.horizontalHeader().setSectionResizeMode(0, stretch_mode)
+        for col in range(1, 8):
+            self.tome_table.horizontalHeader().setSectionResizeMode(col, resize_mode)
+        self.tome_table.verticalHeader().setVisible(False)
+        no_edit = QTableWidget.EditTrigger.NoEditTriggers if PyQt_Version == 6 else QTableWidget.NoEditTriggers
+        sel_row = QTableWidget.SelectionBehavior.SelectRows if PyQt_Version == 6 else QTableWidget.SelectRows
+        sel_single = QTableWidget.SelectionMode.SingleSelection if PyQt_Version == 6 else QTableWidget.SingleSelection
+        self.tome_table.setEditTriggers(no_edit)
+        self.tome_table.setSelectionBehavior(sel_row)
+        self.tome_table.setSelectionMode(sel_single)
+        self.tome_table.setAlternatingRowColors(True)
+        self.tome_table.doubleClicked.connect(lambda: self._use_selected_pet(1))
+        layout.addWidget(self.tome_table)
+
+        self._populate_tome_table(self._pets)
+
+    def _populate_tome_table(self, pet_list):
+        self.tome_table.setRowCount(len(pet_list))
+        align_c = Qt.AlignmentFlag.AlignCenter if PyQt_Version == 6 else Qt.AlignCenter
+        for row, p in enumerate(pet_list):
+            name_item = QTableWidgetItem(p["name"])
+            name_item.setForeground(QColor("#FAFAFA"))
+
+            school = p.get("school", "")
+            school_item = QTableWidgetItem(school)
+            school_color = self.SCHOOL_COLORS.get(school, "#C0C0C0")
+            school_item.setForeground(QColor(school_color))
+
+            wf = p.get("wowFactor")
+            wf_item = QTableWidgetItem(str(wf) if wf is not None else "—")
+            wf_item.setTextAlignment(align_c)
+            if wf is not None:
+                wf_col = "#86EFAC" if wf <= 4 else ("#FDE68A" if wf <= 7 else "#FCA5A5")
+                wf_item.setForeground(QColor(wf_col))
+
+            egg_item = QTableWidgetItem(p.get("eggName", ""))
+            egg_item.setForeground(QColor("#A0A0A0"))
+
+            excl_item = QTableWidgetItem("Yes" if p.get("exclusive") else "No")
+            excl_item.setTextAlignment(align_c)
+            excl_item.setForeground(QColor("#F59E0B" if p.get("exclusive") else "#686868"))
+
+            unhatch_item = QTableWidgetItem("Yes" if p.get("unhatchable") else "No")
+            unhatch_item.setTextAlignment(align_c)
+            unhatch_item.setForeground(QColor("#EF4444" if p.get("unhatchable") else "#686868"))
+
+            ret_item = QTableWidgetItem("Yes" if p.get("retired") else "No")
+            ret_item.setTextAlignment(align_c)
+            ret_item.setForeground(QColor("#94A3B8" if p.get("retired") else "#686868"))
+
+            spec_item = QTableWidgetItem("Yes" if p.get("specialBody") else "No")
+            spec_item.setTextAlignment(align_c)
+            spec_item.setForeground(QColor("#A855F7" if p.get("specialBody") else "#686868"))
+
+            self.tome_table.setItem(row, 0, name_item)
+            self.tome_table.setItem(row, 1, school_item)
+            self.tome_table.setItem(row, 2, wf_item)
+            self.tome_table.setItem(row, 3, egg_item)
+            self.tome_table.setItem(row, 4, excl_item)
+            self.tome_table.setItem(row, 5, unhatch_item)
+            self.tome_table.setItem(row, 6, ret_item)
+            self.tome_table.setItem(row, 7, spec_item)
+
+        self.tome_count_lbl.setText(f"Showing {len(pet_list)} of {len(self._pets)} pets")
+
+    def _filter_tome(self):
+        query = self.tome_search.text().strip().lower()
+        school = self.tome_school_filter.currentData()
+        wf = self.tome_wow_filter.currentData()
+        excl = self.tome_excl_filter.currentData()
+
+        filtered = []
+        for p in self._pets:
+            if query and query not in p["name"].lower():
+                continue
+            if school and p.get("school") != school:
+                continue
+            if wf != "" and wf is not None and p.get("wowFactor") != wf:
+                continue
+            if excl == "exclusive" and not p.get("exclusive"):
+                continue
+            if excl == "non-exclusive" and p.get("exclusive"):
+                continue
+            filtered.append(p)
+
+        self._populate_tome_table(filtered)
+
+    def _use_selected_pet(self, slot=1):
+        selected_rows = self.tome_table.selectedItems()
+        if not selected_rows:
+            return
+        row = self.tome_table.currentRow()
+        pet_name = self.tome_table.item(row, 0).text()
+        if slot == 1:
+            self.combo1.setCurrentText(pet_name)
+        else:
+            self.combo2.setCurrentText(pet_name)
+        self.tabs.setCurrentIndex(0)
+
+    def _show_how_to_use(self):
+        dlg = QDialog(self)
+        dlg.setWindowTitle("How to Use — Pet WoW Returner")
+        dlg.setModal(True)
+        dlg.setFixedWidth(460)
+        dlg.setStyleSheet("QDialog { background-color: #0E0E0E; color: #FAFAFA; border: 1px solid #282828; border-radius: 8px; } QLabel { color: #DADADA; }")
+        l = QVBoxLayout(dlg)
+        l.setContentsMargins(22, 22, 22, 22)
+        l.setSpacing(14)
+        t = QLabel("Pet Hatching & Wow Factor Guide")
+        t.setStyleSheet("font-size: 15px; font-weight: bold; color: #FFFFFF;")
+        l.addWidget(t)
+        b = QLabel(self.HOW_TO_USE)
+        b.setWordWrap(True)
+        b.setStyleSheet("font-size: 11px; color: #C0C0C0; line-height: 1.6;")
+        l.addWidget(b)
+        src = QLabel("Data and logic source: petbodyw101.vercel.app")
+        src.setStyleSheet("font-size: 10px; color: #606060; font-style: italic;")
+        l.addWidget(src)
+        btn = ModernButton("Got it!", "primary")
+        btn.clicked.connect(dlg.accept)
+        l.addWidget(btn)
         dlg.exec()
 
 
@@ -4193,7 +4797,8 @@ class Quick101Launcher(QMainWindow):
 
     def open_pet_wow_returner(self):
         """Open Pet WoW Returner tool"""
-        QMessageBox.information(self, "Pet WoW Returner", "Pet WoW Returner — coming soon!")
+        dlg = PetWoWReturnerDialog(self)
+        dlg.exec()
 
     def open_damage_calculator(self):
         """Open Damage Calculator tool"""
