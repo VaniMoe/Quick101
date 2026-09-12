@@ -1701,79 +1701,75 @@ class CustomTitleBar(QWidget):
             self.parent_window.toggle_maximize()
 
 # --- AUTO UPDATER VIA GITHUB ---
-APP_VERSION = "2.1"
+APP_VERSION = "2.2"
 DEFAULT_GITHUB_REPO = "VaniMoe/Quick101"
 
 def apply_update_and_restart(new_exe_path: str):
-    """Apply the downloaded .exe update and restart Quick101 safely"""
+    """Apply the downloaded .exe update and restart Quick101 safely via PowerShell updater"""
     target_exe = sys.executable if getattr(sys, 'frozen', False) else os.path.join(os.path.expanduser('~'), 'Documents', 'code', 'Quick101.exe')
     target_dir = os.path.dirname(os.path.abspath(target_exe))
     current_pid = os.getpid()
-    batch_file = os.path.join(APPDATA_DIR, "quick101_updater.bat")
+    ps_script = os.path.join(APPDATA_DIR, "quick101_updater.ps1")
     log_event(f"Applying update from {new_exe_path} to {target_exe} (Current PID: {current_pid})...")
     
-    script_content = f'''@echo off
-setlocal enabledelayedexpansion
+    ps_content = f'''
+$target = '{target_exe}'
+$new = '{new_exe_path}'
+$targetDir = '{target_dir}'
+$oldPid = {current_pid}
 
-:: Crucial for PyInstaller: Unset parent temp dir so child process extracts its own DLLs fresh!
-set _MEIPASS2=
-set _MEIPASS=
-set PYTHONHOME=
-set PYTHONPATH=
+# 1. Wait until old process terminates
+while (Get-Process -Id $oldPid -ErrorAction SilentlyContinue) {{
+    Start-Sleep -Milliseconds 400
+}}
+Start-Sleep -Milliseconds 600
 
-set "TARGET={target_exe}"
-set "NEW={new_exe_path}"
-set "TARGET_DIR={target_dir}"
-set "OLD_PID={current_pid}"
+# 2. Copy with retry up to 30 times
+$copied = $false
+for ($i = 0; $i -lt 30; $i++) {{
+    try {{
+        Copy-Item -Path $new -Destination $target -Force -ErrorAction Stop
+        $copied = $true
+        break
+    }} catch {{
+        Start-Sleep -Milliseconds 400
+    }}
+}}
 
-:: 1. Wait until old process completely terminates and releases file locks
-:wait_proc
-tasklist /FI "PID eq %OLD_PID%" 2>nul | find /I "%OLD_PID%" >nul
-if not errorlevel 1 (
-    timeout /t 1 /nobreak >nul
-    goto wait_proc
-)
+# 3. Clean PyInstaller environment variables
+[Environment]::SetEnvironmentVariable('_MEIPASS2', $null, 'Process')
+[Environment]::SetEnvironmentVariable('_MEIPASS', $null, 'Process')
+[Environment]::SetEnvironmentVariable('PYTHONHOME', $null, 'Process')
+[Environment]::SetEnvironmentVariable('PYTHONPATH', $null, 'Process')
 
-:: Extra breathing room for PyInstaller temp cleanup
-timeout /t 1 /nobreak >nul
+# 4. Relaunch updated Quick101
+if ($copied) {{
+    Start-Process -FilePath $target -WorkingDirectory $targetDir
+}}
 
-:: 2. Retry copy up to 30 times
-set RETRIES=0
-:try_copy
-copy /y "%NEW%" "%TARGET%" >nul 2>&1
-if errorlevel 1 (
-    set /a RETRIES+=1
-    if !RETRIES! geq 30 goto copy_failed
-    timeout /t 1 /nobreak >nul
-    goto try_copy
-)
-
-:: 3. Launch updated Quick101 with explicit working directory and clean environment
-cd /d "%TARGET_DIR%"
-start "" "%TARGET%"
-
-:: 4. Cleanup
-del "%NEW%" 2>nul
-(goto) 2>nul & del "%~f0"
-exit /b 0
-
-:copy_failed
-msg * "Quick101 Update could not replace the executable file. Please restart Quick101 manually."
-exit /b 1
+# 5. Clean up
+Remove-Item -Path $new -Force -ErrorAction SilentlyContinue
 '''
     try:
-        with open(batch_file, "w", encoding="utf-8") as f:
-            f.write(script_content)
+        with open(ps_script, "w", encoding="utf-8") as f:
+            f.write(ps_content)
     except Exception as e:
-        log_event(f"Failed to write updater batch: {e}", "ERROR")
+        log_event(f"Failed to write updater script: {e}", "ERROR")
         return
         
+    cmd = [
+        'powershell.exe',
+        '-WindowStyle', 'Hidden',
+        '-NoProfile',
+        '-ExecutionPolicy', 'Bypass',
+        '-File', ps_script
+    ]
     clean_env = os.environ.copy()
     clean_env.pop('_MEIPASS2', None)
     clean_env.pop('_MEIPASS', None)
     clean_env.pop('PYTHONHOME', None)
     clean_env.pop('PYTHONPATH', None)
-    subprocess.Popen(['cmd.exe', '/c', batch_file], env=clean_env, creationflags=0x08000000 if os.name == 'nt' else 0)
+    subprocess.Popen(cmd, env=clean_env, creationflags=0x08000000 if os.name == 'nt' else 0)
     # Force instant process termination so the file lock on target_exe is released immediately
     os._exit(0)
 
