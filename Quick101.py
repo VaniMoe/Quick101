@@ -335,6 +335,98 @@ def get_game_path() -> str:
                 return d
     raise FileNotFoundError("Wizard101 not found.")
 
+ACTIVE_INSTANCES: Dict[str, subprocess.Popen] = {}
+
+def is_account_already_running(nick: str) -> bool:
+    """Check if an account is currently open either by active process or window title"""
+    # 1. Tracked process check
+    if nick in ACTIVE_INSTANCES:
+        p = ACTIVE_INSTANCES[nick]
+        if p and p.poll() is None:
+            return True
+        else:
+            try:
+                del ACTIVE_INSTANCES[nick]
+            except KeyError:
+                pass
+
+    # 2. Window title check: Look for [{nick}]
+    user32_dll = ctypes.windll.user32
+    target_tag = f"[{nick}]"
+    found = []
+    @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.POINTER(ctypes.c_int))
+    def enum_check(h, l):
+        buf = ctypes.create_unicode_buffer(256)
+        user32_dll.GetWindowTextW(h, buf, 256)
+        val = buf.value
+        if val and target_tag in val and "Wizard" in val:
+            found.append(h)
+            return False
+        return True
+
+    try:
+        user32_dll.EnumWindows(enum_check, 0)
+    except Exception:
+        pass
+
+    return len(found) > 0
+
+
+def kill_account_instance(nick: str) -> bool:
+    """Terminate the Wizard101 instance corresponding to account nickname"""
+    killed = False
+    # 1. Kill tracked process
+    if nick in ACTIVE_INSTANCES:
+        p = ACTIVE_INSTANCES.pop(nick, None)
+        if p and p.poll() is None:
+            try:
+                p.kill()
+                killed = True
+            except Exception:
+                pass
+
+    # 2. Find any window with [{nick}] and kill by PID
+    user32_dll = ctypes.windll.user32
+    target_tag = f"[{nick}]"
+    pids_to_kill = set()
+    @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.POINTER(ctypes.c_int))
+    def enum_kill(h, l):
+        buf = ctypes.create_unicode_buffer(256)
+        user32_dll.GetWindowTextW(h, buf, 256)
+        if target_tag in buf.value:
+            pid = ctypes.c_ulong()
+            user32_dll.GetWindowThreadProcessId(h, ctypes.byref(pid))
+            if pid.value:
+                pids_to_kill.add(pid.value)
+        return True
+
+    try:
+        user32_dll.EnumWindows(enum_kill, 0)
+    except Exception:
+        pass
+
+    for pid in pids_to_kill:
+        try:
+            subprocess.run(["taskkill", "/F", "/PID", str(pid)], creationflags=0x08000000, capture_output=True)
+            killed = True
+        except Exception:
+            pass
+
+    return killed
+
+
+def kill_all_wizard_instances():
+    """Kill all WizardGraphicalClient.exe and Wizard101.exe processes"""
+    ACTIVE_INSTANCES.clear()
+    try:
+        subprocess.run(
+            ["taskkill", "/F", "/IM", "WizardGraphicalClient.exe", "/IM", "Wizard101.exe"],
+            creationflags=0x08000000,
+            capture_output=True
+        )
+    except Exception as e:
+        log_event(f"Error killing all instances: {e}", "ERROR")
+
 def launch_with_credentials(user: str, pwd: str, nick: str, timeout: int = 10, is_steam: bool = False):
     """Launch Wizard101 with credentials (supporting Standalone and Steam modes)"""
     STANDALONE_PATH = r"C:/ProgramData/KingsIsle Entertainment/Wizard101/Bin/"
@@ -397,6 +489,7 @@ def launch_with_credentials(user: str, pwd: str, nick: str, timeout: int = 10, i
             cwd=path,
             creationflags=0x08000000
         )
+        ACTIVE_INSTANCES[nick] = proc
         log_event(f"Started Wizard101 process with PID {proc.pid}")
         
         hwnd = None
@@ -1403,7 +1496,7 @@ class FirstTimeSetupDialog(QDialog):
     def setup_ui(self):
         self.setWindowTitle("Quick101 - First Time Setup")
         self.setModal(True)
-        self.setFixedSize(520, 620)
+        self.setFixedSize(520, 680)
         
         icon_path = get_app_icon_path(prefer_ico=True)
         if icon_path and os.path.exists(icon_path):
@@ -1516,8 +1609,28 @@ class FirstTimeSetupDialog(QDialog):
         path_box.addWidget(self.radio_steam)
         main_layout.addWidget(path_group)
         
-        # Section 2: Category
-        cat_group = QGroupBox("2. FIRST CATEGORY")
+        # Section 2: Server Selection
+        server_group = QGroupBox("2. SERVER REGION")
+        server_box = QHBoxLayout(server_group)
+        server_box.setContentsMargins(14, 14, 14, 14)
+        server_box.setSpacing(20)
+        
+        self.radio_srv_us = QRadioButton("US Server (United States)")
+        self.radio_srv_eu = QRadioButton("Europe Server (EU)")
+        
+        current_server = _cfg.get('server', 'US')
+        if current_server == 'Europe':
+            self.radio_srv_eu.setChecked(True)
+        else:
+            self.radio_srv_us.setChecked(True)
+            
+        server_box.addWidget(self.radio_srv_us)
+        server_box.addWidget(self.radio_srv_eu)
+        server_box.addStretch()
+        main_layout.addWidget(server_group)
+        
+        # Section 3: Category
+        cat_group = QGroupBox("3. FIRST CATEGORY")
         cat_box = QVBoxLayout(cat_group)
         cat_box.setContentsMargins(14, 14, 14, 14)
         cat_box.setSpacing(6)
@@ -1532,8 +1645,8 @@ class FirstTimeSetupDialog(QDialog):
         cat_box.addWidget(self.cat_edit)
         main_layout.addWidget(cat_group)
         
-        # Section 3: Account
-        acc_group = QGroupBox("3. FIRST ACCOUNT")
+        # Section 4: Account
+        acc_group = QGroupBox("4. FIRST ACCOUNT")
         acc_box = QVBoxLayout(acc_group)
         acc_box.setContentsMargins(14, 14, 14, 14)
         acc_box.setSpacing(8)
@@ -1607,6 +1720,12 @@ class FirstTimeSetupDialog(QDialog):
             _cfg['wiz_path'] = self.STEAM_PATH
         else:
             _cfg['wiz_path'] = self.STANDALONE_PATH
+
+        # 2. Update server
+        if hasattr(self, 'radio_srv_eu') and self.radio_srv_eu.isChecked():
+            _cfg['server'] = 'Europe'
+        else:
+            _cfg['server'] = 'US'
             
         category = self.cat_edit.text().strip() or "Main"
         nickname = self.nick_edit.text().strip()
@@ -1621,6 +1740,8 @@ class FirstTimeSetupDialog(QDialog):
         _cfg['first_time_setup_completed'] = True
         _cfg['last_category'] = category
         save_config(_cfg)
+        if self.parent() and hasattr(self.parent(), 'update_status'):
+            self.parent().update_status(f"Setup completed. Server: {_cfg['server']}")
         self.accept()
 
 # --- CUSTOM TITLEBAR & SETTINGS DIALOG ---
@@ -1731,7 +1852,7 @@ class CustomTitleBar(QWidget):
             self.parent_window.toggle_maximize()
 
 # --- AUTO UPDATER VIA GITHUB ---
-APP_VERSION = "2.5"
+APP_VERSION = "2.6"
 DEFAULT_GITHUB_REPO = "VaniMoe/Quick101"
 
 def apply_update(new_exe_path: str) -> bool:
@@ -1909,15 +2030,15 @@ class UpdateDialog(QDialog):
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(12)
         
-        title = QLabel(f"Neues Update ready! (v{self.version})")
+        title = QLabel(f"New Update Ready! (v{self.version})")
         title.setStyleSheet("font-size: 16px; font-weight: bold; color: #FFFFFF; letter-spacing: 0.5px;")
         layout.addWidget(title)
         
-        current_lbl = QLabel(f"Ein neues Update für Quick101 ist verfügbar. (Installiert: v{APP_VERSION})")
+        current_lbl = QLabel(f"A new update for Quick101 is ready to download. (Installed: v{APP_VERSION})")
         current_lbl.setStyleSheet("color: #86EFAC; font-size: 11px;")
         layout.addWidget(current_lbl)
 
-        link_lbl = QLabel('<a href="https://github.com/VaniMoe/Quick101/releases/latest" style="color: #60A5FA; text-decoration: underline;">GitHub Release Seite öffnen & herunterladen</a>')
+        link_lbl = QLabel('<a href="https://github.com/VaniMoe/Quick101/releases/latest" style="color: #60A5FA; text-decoration: underline;">Open GitHub Releases Page & Download</a>')
         link_lbl.setOpenExternalLinks(True)
         link_lbl.setStyleSheet("font-size: 11px;")
         layout.addWidget(link_lbl)
@@ -1951,15 +2072,15 @@ class UpdateDialog(QDialog):
         
         btn_layout.addStretch()
         
-        self.cancel_btn = ModernButton("Später", "secondary")
+        self.cancel_btn = ModernButton("Later", "secondary")
         self.cancel_btn.clicked.connect(self.reject)
         btn_layout.addWidget(self.cancel_btn)
         
         if self.download_url:
-            self.action_btn = ModernButton("Direkt Updaten", "primary")
+            self.action_btn = ModernButton("Direct Update", "primary")
             self.action_btn.clicked.connect(self.start_update)
         else:
-            self.action_btn = ModernButton("Auf GitHub öffnen", "primary")
+            self.action_btn = ModernButton("Open on GitHub", "primary")
             self.action_btn.clicked.connect(self.open_release_page)
         btn_layout.addWidget(self.action_btn)
         
@@ -1972,49 +2093,49 @@ class UpdateDialog(QDialog):
 
     def start_update(self):
         self.action_btn.setEnabled(False)
-        self.action_btn.setText("Lade herunter...")
+        self.action_btn.setText("Downloading...")
         self.cancel_btn.setEnabled(False)
         if hasattr(self, 'gh_btn'):
             self.gh_btn.setEnabled(False)
         self.progress_bar.show()
-        self.status_lbl.setText("Lade Update von GitHub herunter...")
+        self.status_lbl.setText("Downloading update from GitHub...")
         self.status_lbl.show()
         self.updater.download_and_install_update(self.download_url)
 
     def on_download_progress(self, percent: int):
         self.progress_bar.setValue(percent)
-        self.status_lbl.setText(f"Download läuft: {percent}%")
+        self.status_lbl.setText(f"Download in progress: {percent}%")
 
     def on_download_finished(self, new_exe_path: str):
         self.progress_bar.setValue(100)
         success = apply_update(new_exe_path)
         if success:
-            self.status_lbl.setText("Update installiert! Bitte Quick101 neu starten.")
+            self.status_lbl.setText("Update installed! Please restart Quick101.")
             self.status_lbl.setStyleSheet("color: #86EFAC; font-size: 11px;")
-            self.action_btn.setText("Schließen")
+            self.action_btn.setText("Close")
             self.action_btn.setEnabled(True)
             self.action_btn.clicked.disconnect()
             self.action_btn.clicked.connect(self.accept)
             self.cancel_btn.hide()
             QMessageBox.information(
-                self, "Update Installiert",
-                "Das Update wurde erfolgreich heruntergeladen und installiert.\n\n"
-                "Bitte schließe Quick101 und starte es neu, um die neue Version zu nutzen."
+                self, "Update Installed",
+                "The update has been downloaded and installed.\n\n"
+                "Please close and reopen Quick101 to use the new version."
             )
         else:
-            self.status_lbl.setText("Fehler beim Ersetzen der EXE.")
+            self.status_lbl.setText("Failed to replace the EXE. Is Quick101 running or write-protected?")
             self.status_lbl.setStyleSheet("color: #FFA0A0; font-size: 11px;")
             self.action_btn.setEnabled(True)
-            self.action_btn.setText("Wiederholen")
+            self.action_btn.setText("Retry")
             self.cancel_btn.setEnabled(True)
             if hasattr(self, 'gh_btn'):
                 self.gh_btn.setEnabled(True)
 
     def on_download_failed(self, err: str):
-        self.status_lbl.setText(f"Update fehlgeschlagen: {err}")
+        self.status_lbl.setText(f"Update failed: {err}")
         self.status_lbl.setStyleSheet("color: #FFA0A0; font-size: 11px;")
         self.action_btn.setEnabled(True)
-        self.action_btn.setText("Wiederholen")
+        self.action_btn.setText("Retry")
         self.cancel_btn.setEnabled(True)
         if hasattr(self, 'gh_btn'):
             self.gh_btn.setEnabled(True)
@@ -2023,6 +2144,79 @@ class UpdateDialog(QDialog):
         import webbrowser
         webbrowser.open("https://github.com/VaniMoe/Quick101/releases/latest")
         self.accept()
+
+class AccountAlreadyOpenDialog(QDialog):
+    """Custom warning popup when an account is already running"""
+    def __init__(self, parent=None, nickname=""):
+        super().__init__(parent)
+        self.setWindowTitle("Account Already Open")
+        self.setFixedWidth(420)
+        self.setModal(True)
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #0E0E0E;
+                color: #FAFAFA;
+                border: 1px solid #282828;
+                border-radius: 8px;
+            }
+            QLabel {
+                color: #E0E0E0;
+            }
+        """)
+        self.setup_ui(nickname)
+
+    def setup_ui(self, nickname):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(22, 22, 22, 22)
+        layout.setSpacing(16)
+
+        # Header
+        header_layout = QHBoxLayout()
+        header_layout.setSpacing(10)
+        
+        warn_icon = QLabel("⚠️")
+        warn_icon.setStyleSheet("font-size: 20px; background: transparent; border: none;")
+        header_layout.addWidget(warn_icon)
+        
+        title_lbl = QLabel("ACCOUNT ALREADY OPEN")
+        title_lbl.setStyleSheet("font-size: 13px; font-weight: bold; color: #F59E0B; letter-spacing: 1px; background: transparent; border: none;")
+        header_layout.addWidget(title_lbl, 1)
+        layout.addLayout(header_layout)
+
+        # Message Card
+        msg_card = QFrame()
+        msg_card.setStyleSheet("""
+            QFrame {
+                background-color: #141414;
+                border: 1px solid #262626;
+                border-radius: 6px;
+                padding: 12px;
+            }
+        """)
+        msg_layout = QVBoxLayout(msg_card)
+        msg_layout.setContentsMargins(12, 12, 12, 12)
+        
+        msg_lbl = QLabel(f"Der Account <b><font color='#F59E0B'>{nickname}</font></b> ist bereits offen.<br><br>Trotzdem öffnen?")
+        msg_lbl.setWordWrap(True)
+        msg_lbl.setStyleSheet("font-size: 13px; color: #EDEDED; background: transparent; border: none;")
+        msg_layout.addWidget(msg_lbl)
+        layout.addWidget(msg_card)
+
+        # Buttons: Skip Account, JA öffnen
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(10)
+
+        skip_btn = ModernButton("Skip Account", "secondary")
+        skip_btn.setFixedHeight(36)
+        skip_btn.clicked.connect(self.reject)
+        btn_layout.addWidget(skip_btn)
+
+        yes_btn = ModernButton("JA öffnen", "primary")
+        yes_btn.setFixedHeight(36)
+        yes_btn.clicked.connect(self.accept)
+        btn_layout.addWidget(yes_btn)
+
+        layout.addLayout(btn_layout)
 
 class SettingsDialog(QDialog):
     """Settings Dialog for Quick101 (All English)"""
@@ -2068,6 +2262,11 @@ class SettingsDialog(QDialog):
         self.updater.check_failed.connect(self.on_update_error)
         self.setup_ui()
 
+    def run_first_setup(self):
+        self.accept()
+        if self.parent_window and hasattr(self.parent_window, 'open_first_time_setup'):
+            self.parent_window.open_first_time_setup()
+
     def setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
@@ -2100,7 +2299,18 @@ class SettingsDialog(QDialog):
         server_layout.addWidget(self.radio_test)
         layout.addWidget(server_group)
         
-        # 2. Logs
+        # 2. First-Time Setup Wizard
+        setup_group = QGroupBox("FIRST-TIME SETUP")
+        setup_layout = QVBoxLayout(setup_group)
+        setup_layout.setSpacing(8)
+        
+        setup_wizard_btn = ModernButton("Run Setup Wizard", "secondary", icon_name="setup")
+        setup_wizard_btn.setToolTip("Rerun the first-time setup assistant to detect game directories and configure server region")
+        setup_wizard_btn.clicked.connect(self.run_first_setup)
+        setup_layout.addWidget(setup_wizard_btn)
+        layout.addWidget(setup_group)
+        
+        # 3. Logs
         logs_group = QGroupBox("LOG FILES")
         logs_layout = QVBoxLayout(logs_group)
         logs_layout.setSpacing(8)
@@ -3297,15 +3507,13 @@ class DiscordRPCManager:
                 return
 
         instances = count_wizard101_instances()
+        details = "In Launcher"
         if instances == 0:
-            details = "Quick101 - Wizard101 Launcher"
-            state = "Befindet sich gerade im Launcher"
+            state = "Ready to Launch"
         elif instances == 1:
-            details = "Quick101 - Wizard101 Launcher"
-            state = "1 Instanz offen"
+            state = "1 Instance Open"
         else:
-            details = "Quick101 - Wizard101 Launcher"
-            state = f"{instances} Instanzen offen"
+            state = f"{instances} Instances Open"
 
         buttons = [
             {
@@ -3319,7 +3527,6 @@ class DiscordRPCManager:
             "state": state,
             "timestamps": {"start": self.start_time},
             "assets": {
-                "large_image": "quick101",
                 "large_text": "Quick101 - Wizard101 Launcher"
             },
             "buttons": buttons
@@ -3455,7 +3662,7 @@ class DamageCalculatorDialog(QDialog):
         "   • Global Bubble % (e.g. 25% Wyldfire)\n"
         "   • Enemy Internal Boost % (if applicable)\n\n"
         "3. Add Blades and Traps:\n"
-        "   • Use quick buttons (+35%, +45%, Feint +70%, etc.) or custom %\n"
+        "   • Use quick buttons (+35%, +45%, Trap +40%, Potent Trap +50%, Feint +70%, Mass/Item +75%, Potent Feint +80%) or custom %\n"
         "   • Click any chip to remove it\n\n"
         "Order of calculation matches in-game order:\n"
         "Base → Gear % → Flat → Aura → Blades → Bubble → Traps → Enemy Boost.\n\n"
@@ -3754,7 +3961,7 @@ class DamageCalculatorDialog(QDialog):
         t_add_row.addWidget(add_t_btn)
 
         # Quick trap buttons
-        for val, label in [(20, "+20%"), (25, "+25%"), (30, "+30%"), (35, "+35%"), (70, "+70% Feint"), (75, "+75% Potent")]:
+        for val, label in [(25, "+25%"), (30, "+30%"), (35, "+35%"), (40, "+40% School"), (50, "+50% Potent"), (70, "+70% Feint"), (75, "+75% Mass / Item"), (80, "+80% Potent Feint")]:
             qt = QPushButton(label)
             qt.setCursor(cursor_ptr)
             qt.setStyleSheet("background-color: #1A1A1A; color: #D0D0D0; border: 1px solid #333333; border-radius: 4px; padding: 4px 8px; font-size: 11px;")
@@ -4409,6 +4616,11 @@ class Quick101Launcher(QMainWindow):
         if not account_data or 'username' not in account_data:
             QMessageBox.critical(self, "Error", f"Account data for {nickname} not found!")
             return
+
+        if is_account_already_running(nickname):
+            dlg = AccountAlreadyOpenDialog(self, nickname)
+            if dlg.exec() != (QDialog.DialogCode.Accepted if PyQt_Version == 6 else QDialog.Accepted):
+                return
             
         timeout = _cfg.get('auto_login_timeout', 10)
         is_steam = account_data.get('steam', False) if isinstance(account_data, dict) else False
@@ -4510,18 +4722,6 @@ class Quick101Launcher(QMainWindow):
         compact_btn = ModernButton("Compact Mode", "secondary", icon_name="compact")
         compact_btn.clicked.connect(self.switch_to_compact_mode)
         nav_layout.addWidget(compact_btn)
-        
-        setup_btn = ModernButton("First Setup", "secondary", icon_name="setup")
-        setup_btn.clicked.connect(self.open_first_time_setup)
-        nav_layout.addWidget(setup_btn)
-        
-        bg_btn = ModernButton("Background", "secondary", icon_name="folder")
-        bg_btn.clicked.connect(self.show_background_settings)
-        nav_layout.addWidget(bg_btn)
-        
-        remove_bg_btn = ModernButton("Remove BG", "secondary")
-        remove_bg_btn.clicked.connect(self.remove_background)
-        nav_layout.addWidget(remove_bg_btn)
         
         settings_btn = ModernButton("Settings", "secondary", icon_name="settings")
         settings_btn.clicked.connect(self.open_settings_dialog)
@@ -4639,11 +4839,27 @@ class Quick101Launcher(QMainWindow):
         launch_group = QGroupBox("LAUNCH CONTROLS")
         launch_layout = QVBoxLayout(launch_group)
         launch_layout.setContentsMargins(14, 16, 14, 14)
+        launch_layout.setSpacing(8)
         
         launch_sel_btn = ModernButton("LAUNCH SELECTED", "primary", icon_name="launch")
         launch_sel_btn.setFixedHeight(44)
         launch_sel_btn.clicked.connect(self.launch_selected_accounts)
         launch_layout.addWidget(launch_sel_btn)
+        
+        kill_layout = QHBoxLayout()
+        kill_layout.setSpacing(8)
+        
+        kill_sel_btn = ModernButton("Kill Selected", "danger", icon_name="delete")
+        kill_sel_btn.setToolTip("Terminate running Wizard101 instance for selected account(s)")
+        kill_sel_btn.clicked.connect(self.kill_selected_instances)
+        kill_layout.addWidget(kill_sel_btn, 1)
+        
+        kill_all_btn = ModernButton("Kill All", "danger", icon_name="delete")
+        kill_all_btn.setToolTip("Terminate ALL running Wizard101 instances")
+        kill_all_btn.clicked.connect(self.kill_all_instances)
+        kill_layout.addWidget(kill_all_btn, 1)
+        
+        launch_layout.addLayout(kill_layout)
         
         layout.addWidget(launch_group)
         
@@ -5467,6 +5683,22 @@ class Quick101Launcher(QMainWindow):
         if not selected_items:
             QMessageBox.warning(self, "No Selection", "Please select account(s) to launch.")
             return
+
+        # Check if any account is already open
+        accounts_to_launch = []
+        for item in selected_items:
+            nickname = item.data(Qt.ItemDataRole.UserRole if PyQt_Version == 6 else Qt.UserRole)
+            if is_account_already_running(nickname):
+                dlg = AccountAlreadyOpenDialog(self, nickname)
+                if dlg.exec() == (QDialog.DialogCode.Accepted if PyQt_Version == 6 else QDialog.Accepted):
+                    accounts_to_launch.append(item)
+                else:
+                    self.update_status(f"Skipped already running account: {nickname}")
+            else:
+                accounts_to_launch.append(item)
+
+        if not accounts_to_launch:
+            return
         
         # Update throttle time
         self.last_launch_time = current_time
@@ -5478,7 +5710,7 @@ class Quick101Launcher(QMainWindow):
             # Launch all accounts simultaneously in separate threads
             threads = []
             
-            for item in selected_items:
+            for item in accounts_to_launch:
                 # Get original account name from UserRole data
                 nickname = item.data(Qt.ItemDataRole.UserRole if PyQt_Version == 6 else Qt.UserRole)
                 _, account_data = load_account(category, nickname)
@@ -5508,7 +5740,29 @@ class Quick101Launcher(QMainWindow):
         thread = threading.Thread(target=launch_worker, daemon=True)
         thread.start()
         
-        self.update_status(f"Launching {len(selected_items)} account(s)...")
+        self.update_status(f"Launching {len(accounts_to_launch)} account(s)...")
+
+    def kill_selected_instances(self):
+        """Kill running Wizard101 instance(s) for selected account(s)"""
+        selected_items = self.account_list.get_selected_items()
+        if not selected_items:
+            QMessageBox.information(self, "Kill Instances", "Please select account(s) in the list to terminate.")
+            return
+            
+        killed_any = False
+        for item in selected_items:
+            nickname = item.data(Qt.ItemDataRole.UserRole if PyQt_Version == 6 else Qt.UserRole)
+            if kill_account_instance(nickname):
+                killed_any = True
+                self.update_status(f"Terminated instance for: {nickname}")
+                
+        if not killed_any:
+            self.update_status("No running instance found for selected account(s)")
+
+    def kill_all_instances(self):
+        """Kill all running Wizard101 instances"""
+        kill_all_wizard_instances()
+        self.update_status("All Wizard101 instances terminated")
     
     STANDALONE_PATH = r"C:/ProgramData/KingsIsle Entertainment/Wizard101/Bin/"
     STEAM_PATH = r"C:/Program Files (x86)/Steam/steamapps/common/Wizard101/Bin/"
