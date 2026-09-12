@@ -2201,13 +2201,13 @@ class AccountAlreadyOpenDialog(QDialog):
         msg_layout = QVBoxLayout(msg_card)
         msg_layout.setContentsMargins(12, 12, 12, 12)
         
-        msg_lbl = QLabel(f"Der Account <b><font color='#F59E0B'>{nickname}</font></b> ist bereits offen.<br><br>Trotzdem öffnen?")
+        msg_lbl = QLabel(f"The account <b><font color='#F59E0B'>{nickname}</font></b> is already open.<br><br>Open anyway?")
         msg_lbl.setWordWrap(True)
         msg_lbl.setStyleSheet("font-size: 13px; color: #EDEDED; background: transparent; border: none;")
         msg_layout.addWidget(msg_lbl)
         layout.addWidget(msg_card)
 
-        # Buttons: Skip Account, JA öffnen
+        # Buttons: Skip Account, Open Anyway
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(10)
 
@@ -2216,7 +2216,7 @@ class AccountAlreadyOpenDialog(QDialog):
         skip_btn.clicked.connect(self.reject)
         btn_layout.addWidget(skip_btn)
 
-        yes_btn = ModernButton("JA öffnen", "primary")
+        yes_btn = ModernButton("Open Anyway", "primary")
         yes_btn.setFixedHeight(36)
         yes_btn.clicked.connect(self.accept)
         btn_layout.addWidget(yes_btn)
