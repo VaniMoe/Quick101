@@ -835,6 +835,22 @@ def create_vector_icon(name: str, color_hex: str = '#FAFAFA', size: int = 16) ->
             x2 = 8 + 6.8 * math.cos(rad)
             y2 = 8 + 6.8 * math.sin(rad)
             p.drawLine(QPointF(x1, y1), QPointF(x2, y2))
+    elif name == 'pet':
+        # Paw print: large central pad + 3 small toe pads
+        p.setBrush(QBrush(col))
+        pen.setWidth(0)
+        p.setPen(pen)
+        p.drawEllipse(QRectF(4.5, 7.5, 7, 6))   # main pad
+        p.drawEllipse(QRectF(2.0, 4.5, 3.5, 3))  # left toe
+        p.drawEllipse(QRectF(5.5, 2.5, 3.0, 3))  # middle toe
+        p.drawEllipse(QRectF(9.5, 4.5, 3.5, 3))  # right toe
+    elif name == 'damage':
+        # Lightning bolt
+        p.setBrush(QBrush(col))
+        pen.setWidth(0)
+        p.setPen(pen)
+        bolt = [QPointF(10, 2), QPointF(5.5, 9), QPointF(8.5, 9), QPointF(6, 14), QPointF(10.5, 7), QPointF(7.5, 7)]
+        p.drawPolygon(QPolygonF(bolt))
     p.end()
     return QIcon(pix)
 
@@ -2896,22 +2912,29 @@ class Quick101Launcher(QMainWindow):
         
         layout.addWidget(path_group)
         
-        # Information panel
-        info_group = QGroupBox("STATUS && INFO")
-        info_layout = QVBoxLayout(info_group)
-        info_layout.setContentsMargins(14, 16, 14, 14)
-        info_layout.setSpacing(6)
-        
-        self.info_label = QLabel("Ready")
-        self.info_label.setWordWrap(True)
-        self.info_label.setStyleSheet("color: #969696; font-size: 11px;")
-        info_layout.addWidget(self.info_label)
-        
-        timeout_label = QLabel(f"Auto-login timeout: {_cfg.get('auto_login_timeout', 300)//60} minutes")
-        timeout_label.setStyleSheet("font-size: 10px; color: #5F5F5F;")
-        info_layout.addWidget(timeout_label)
-        
-        layout.addWidget(info_group)
+        # Hidden info_label kept for internal setText() calls (category display etc.)
+        self.info_label = QLabel("")
+        self.info_label.hide()
+
+        # Tools panel
+        tools_group = QGroupBox("TOOLS")
+        tools_layout = QVBoxLayout(tools_group)
+        tools_layout.setContentsMargins(14, 16, 14, 14)
+        tools_layout.setSpacing(8)
+
+        pet_calc_btn = ModernButton("Pet Calculator", "secondary", icon_name="pet")
+        pet_calc_btn.clicked.connect(self.open_pet_calculator)
+        tools_layout.addWidget(pet_calc_btn)
+
+        pet_wow_btn = ModernButton("Pet WoW Returner", "secondary", icon_name="pet")
+        pet_wow_btn.clicked.connect(self.open_pet_wow_returner)
+        tools_layout.addWidget(pet_wow_btn)
+
+        dmg_calc_btn = ModernButton("Damage Calculator", "secondary", icon_name="damage")
+        dmg_calc_btn.clicked.connect(self.open_damage_calculator)
+        tools_layout.addWidget(dmg_calc_btn)
+
+        layout.addWidget(tools_group)
         layout.addStretch()
         return panel
     
@@ -3854,7 +3877,20 @@ class Quick101Launcher(QMainWindow):
         if hasattr(self, 'status_bar'):
             self.status_bar.showMessage(message, 5000)  # Show for 5 seconds
         print(f"Status: {message}")  # Also log to console
-    
+
+    # --- TOOLS ---
+    def open_pet_calculator(self):
+        """Open Pet Calculator tool"""
+        QMessageBox.information(self, "Pet Calculator", "Pet Calculator — coming soon!")
+
+    def open_pet_wow_returner(self):
+        """Open Pet WoW Returner tool"""
+        QMessageBox.information(self, "Pet WoW Returner", "Pet WoW Returner — coming soon!")
+
+    def open_damage_calculator(self):
+        """Open Damage Calculator tool"""
+        QMessageBox.information(self, "Damage Calculator", "Damage Calculator — coming soon!")
+
     def open_settings_dialog(self):
         """Open custom settings dialog with server selection, logs, clear accounts, and reset"""
         dialog = SettingsDialog(self)
